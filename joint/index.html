@@ -1101,7 +1101,7 @@ const holds = new Map();               // pointerId -> { t0, x, y, moved }
 const dive = { phase: "none", t: 0, ox: 0, oy: 0, session: false, fast: false, jointSince: 0 };
 let world = null, diveTmp = null, ww = 0, wh = 0;
 const HOLD_MS = 600;
-const dIn = () => dive.fast ? .45 : 1.1, dOut = () => dive.fast ? .35 : .75;
+const dIn = () => dive.fast ? .38 : .85, dOut = () => dive.fast ? .3 : .6;
 
 cv.addEventListener("pointerdown", e => { holds.set(e.pointerId, { t0: performance.now(), x: e.clientX, y: e.clientY, moved: false }); });
 addEventListener("pointermove", e => { const h = holds.get(e.pointerId); if (h && Math.hypot(e.clientX - h.x, e.clientY - h.y) > 24) h.moved = true; });
@@ -1124,6 +1124,9 @@ function diveCheck() {
 function startDive(fast) {
   const q = frameM.transformPoint(new DOMPoint(bx + radius(bx) * .15, 0));
   dive.phase = "in"; dive.t = 0; dive.ox = q.x; dive.oy = q.y; dive.fast = fast; dive.session = true;
+  dive.rot = Math.atan2(Math.sin(worldTargetAngle()), Math.cos(worldTargetAngle()));
+  if (Math.abs(dive.rot) < .35) dive.rot += (Math.random() < .5 ? -1 : 1) * .5;   // auch ohne Neigung ein wenig hineindrehen
+  if (world) world.theta = worldTargetAngle();
   state = "dive"; heat = 1.4; musicGate(false);
   if (ac) { crackleGain.gain.setTargetAtTime(0, ac.currentTime, .05); hissGain.gain.setTargetAtTime(0, ac.currentTime, .05); }
   whoosh(true);
@@ -1135,7 +1138,7 @@ function diveUpdate(dt) {
   if (dive.phase === "in" && dive.t >= dIn()) { dive.phase = "world"; dive.t = 0; if (!world || ww !== worldDims()[0]) world = makeWorld(); }
   else if (dive.phase === "world") {
     updateWorld(dt);
-    if (otherHolds().length === 0 && dive.t > (dive.fast ? .15 : .6)) { dive.phase = "out"; dive.t = 0; worldAudio(false); whoosh(false); }
+    if (otherHolds().length === 0 && dive.t > (dive.fast ? .15 : .6)) { dive.phase = "out"; dive.t = 0; dive.rot = Math.atan2(Math.sin(world.theta), Math.cos(world.theta)); worldAudio(false); whoosh(false); }
   } else if (dive.phase === "out" && dive.t >= dOut()) {
     dive.phase = "none"; state = "lit"; dive.jointSince = performance.now();
     if (mode === "breath") { drawing = false; breathState = "idle"; }
@@ -1144,21 +1147,27 @@ function diveUpdate(dt) {
 }
 
 // Gerenderte Joint-Szene auf einen Punkt zoomen (Kameraflug)
-function zoomFrame(z, glow, flash) {
+// Kameraflug: auf die Glut zoomen, sie dabei zur Bildmitte ziehen und in die Ausrichtung der Stadt hineindrehen
+const easeIO = x => x < .5 ? 2 * x * x : 1 - Math.pow(-2 * x + 2, 2) / 2;
+function zoomFrame(u, glow, flash) {
   if (!diveTmp || diveTmp.width !== cv.width || diveTmp.height !== cv.height) { diveTmp = document.createElement("canvas"); diveTmp.width = cv.width; diveTmp.height = cv.height; }
   const tc = diveTmp.getContext("2d"); tc.setTransform(1, 0, 0, 1, 0, 0); tc.drawImage(cv, 0, 0);
-  const ox = dive.ox * dpr, oy = dive.oy * dpr;
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.drawImage(diveTmp, ox * (1 - 1 / z), oy * (1 - 1 / z), cv.width / z, cv.height / z, 0, 0, cv.width, cv.height);
+  const z = Math.exp(u * u * Math.log(70)), e = easeIO(u);
+  const rot = dive.rot * e;
+  const cx = dive.ox + (W / 2 - dive.ox) * e, cy = dive.oy + (H / 2 - dive.oy) * e;   // Glut wandert zur Mitte
+  ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.fillStyle = "#2a0c05"; ctx.fillRect(0, 0, cv.width, cv.height);
+  ctx.setTransform(new DOMMatrix([dpr, 0, 0, dpr, 0, 0]).translate(cx, cy).rotate(rot * 180 / Math.PI).scale(z).translate(-dive.ox, -dive.oy).scale(1 / dpr));
+  ctx.drawImage(diveTmp, 0, 0);
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   const n = 70, sp = clamp((z - 1) / 8, 0, 1);
   ctx.save(); ctx.globalCompositeOperation = "lighter"; ctx.lineCap = "round";
   for (let i = 0; i < n; i++) {
-    const a = i * 2.39996, r0 = (60 + ((i * 97 + performance.now() * .9) % 400)) * (1 + sp), r1b = r0 + 40 + sp * 200;
-    ctx.strokeStyle = `rgba(255,${150 + (i * 37) % 100},60,${.25 * sp})`; ctx.lineWidth = 1 + (i % 3);
-    ctx.beginPath(); ctx.moveTo(dive.ox + Math.cos(a) * r0, dive.oy + Math.sin(a) * r0); ctx.lineTo(dive.ox + Math.cos(a) * r1b, dive.oy + Math.sin(a) * r1b); ctx.stroke();
+    // Geschwindigkeitslinien, leicht verdrallt in Drehrichtung
+    const a = i * 2.39996 + rot * .6, r0 = (60 + ((i * 97 + performance.now() * 1.2) % 400)) * (1 + sp), r1b = r0 + 40 + sp * 240, tw = Math.sign(dive.rot) * .25 * sp;
+    ctx.strokeStyle = `rgba(255,${150 + (i * 37) % 100},60,${.28 * sp})`; ctx.lineWidth = 1 + (i % 3);
+    ctx.beginPath(); ctx.moveTo(cx + Math.cos(a) * r0, cy + Math.sin(a) * r0); ctx.lineTo(cx + Math.cos(a + tw) * r1b, cy + Math.sin(a + tw) * r1b); ctx.stroke();
   }
-  const g = ctx.createRadialGradient(dive.ox, dive.oy, 0, dive.ox, dive.oy, Math.max(W, H));
+  const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, Math.max(W, H));
   g.addColorStop(0, `rgba(255,220,140,${glow})`); g.addColorStop(.4, `rgba(255,120,30,${glow * .7})`); g.addColorStop(1, `rgba(120,20,0,${glow * .4})`);
   ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
   ctx.restore();
@@ -1167,13 +1176,13 @@ function zoomFrame(z, glow, flash) {
 function renderDive(t) {
   if (dive.phase === "in") {
     const u = dive.t / dIn();
-    render(t); zoomFrame(Math.exp(u * u * Math.log(70)), u * u * .8, clamp((u - .78) / .22, 0, 1));
+    render(t); zoomFrame(u, u * u * .8, clamp((u - .8) / .2, 0, 1));
   } else if (dive.phase === "world") {
     renderWorld(t);
-    if (dive.t < .3) { ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.fillStyle = `rgba(255,236,200,${1 - dive.t / .3})`; ctx.fillRect(0, 0, W, H); }
+    if (dive.t < .25) { ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.fillStyle = `rgba(255,236,200,${1 - dive.t / .25})`; ctx.fillRect(0, 0, W, H); }
   } else if (dive.phase === "out") {
     const u = 1 - dive.t / dOut();
-    render(t); zoomFrame(Math.exp(u * u * Math.log(70)), u * u * .8, clamp((u - .65) / .35, 0, 1));
+    render(t); zoomFrame(u, u * u * .8, clamp((u - .7) / .3, 0, 1));
   }
 }
 
