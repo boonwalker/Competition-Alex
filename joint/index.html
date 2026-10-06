@@ -1,0 +1,514 @@
+<title>Handy-Joint</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600&family=Rubik:wght@400;600&display=swap">
+<style>
+/* Layout: Vollbild-Canvas, Joint liegt immer auf der langen Achse; UI schwebt minimal in den Ecken */
+:root {
+  --bg: #0b0a09;
+  --ink: #efe7da;
+  --muted: #8f8577;
+  --ember: #ff8a2a;
+  --display: "Fraunces", Georgia, serif;
+  --body: "Rubik", system-ui, sans-serif;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body { background: var(--bg); color: var(--ink); font-family: var(--body); overflow: hidden; -webkit-user-select: none; user-select: none; touch-action: none; -webkit-touch-callout: none; }
+canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+.ui { position: fixed; top: calc(env(safe-area-inset-top, 0px) + 12px); right: 16px; display: flex; gap: 8px; z-index: 3; transition: opacity .6s; }
+.ui.dim { opacity: .15; }
+.ui button { font: 600 13px var(--body); color: var(--ink); background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.14); border-radius: 999px; padding: 8px 14px; cursor: pointer; }
+.overlay { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; text-align: center; padding-inline: 16px; z-index: 2; background: radial-gradient(ellipse at center, rgba(11,10,9,.35), rgba(11,10,9,.85)); transition: opacity .8s; }
+.overlay.gone { opacity: 0; pointer-events: none; }
+.overlay h1 { font-family: var(--display); font-weight: 600; font-size: clamp(30px, 7vw, 56px); margin: 0; line-height: 1; letter-spacing: -.01em; }
+.overlay p { margin: 0; color: var(--muted); max-width: 40ch; line-height: 1.45; font-size: 15px; }
+.go { font: 600 17px var(--body); color: #1a0d04; background: var(--ember); border: 0; border-radius: 999px; padding: 14px 30px; cursor: pointer; box-shadow: 0 0 40px rgba(255,138,42,.45); }
+button:focus-visible { outline: 2px solid var(--ember); outline-offset: 3px; }
+</style>
+
+<canvas id="c"></canvas>
+
+<div class="ui" id="ui">
+  <button id="flip" title="Filter auf die andere Seite">⇄ Seite</button>
+  <button id="fs" title="Vollbild">⛶ Vollbild</button>
+</div>
+
+<div class="overlay" id="start">
+  <h1>Handy-Joint</h1>
+  <p>Handy quer halten, Filterende an die Lippen. Finger aufs Display legen und halten, um zu ziehen. Loslassen zum Ausatmen. Auf die Asche tippen zum Abaschen.</p>
+  <button class="go" id="light">🔥 Anzünden</button>
+</div>
+
+<div class="overlay gone" id="end">
+  <h1>Aufgeraucht.</h1>
+  <p id="endtxt"></p>
+  <button class="go" id="again">Neuen drehen</button>
+</div>
+
+<script>
+const cv = document.getElementById("c"), ctx = cv.getContext("2d");
+const rand = (a, b) => a + Math.random() * (b - a);
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+let W, H, dpr, L, S, r0, r1, x0, fullLen, filterLen, burnStart, burnEnd;
+let body, ashTex, smokeSprite, frameM, frameInv;
+let orient = 0;           // Haltung: gespiegelt / im Hochformat links- oder rechtsrum
+let state = "unlit";      // unlit | lighting | lit | out
+let bx, ashStart, heat = 0, drawing = false, drawStart = 0, drawTime = 0, totalDrags = 0, haze = 0, lightT = 0;
+let smoke = [], sparks = [], ashFall = [], emberDots = [];
+const seeds = [rand(0, 9), rand(0, 9), rand(0, 9)];
+
+// ---------- Geometrie ----------
+function radius(x) { return r0 + (r1 - r0) * clamp((x - x0) / fullLen, 0, 1); }
+
+function resize() {
+  dpr = Math.min(window.devicePixelRatio || 1, 2);
+  W = innerWidth; H = innerHeight;
+  cv.width = W * dpr; cv.height = H * dpr;
+  L = Math.max(W, H); S = Math.min(W, H);
+  r1 = Math.min(S * 0.085, L * 0.042); r0 = r1 * 0.74;
+  x0 = -L / 2 - 6; fullLen = L * 0.9; filterLen = fullLen * 0.16;
+  burnStart = x0 + fullLen; burnEnd = x0 + filterLen + L * 0.025;
+  if (state === "unlit") { bx = burnStart; ashStart = bx; }
+  bx = clamp(bx ?? burnStart, burnEnd, burnStart); ashStart = Math.max(ashStart ?? bx, bx);
+  buildBody(); buildAsh(); buildSmoke(); buildEmberDots(); buildFrame();
+}
+
+function buildFrame() {
+  const portrait = H > W;
+  let deg = portrait ? ((orient >> 1) % 2 ? 90 : -90) : 0;
+  frameM = new DOMMatrix().translate(W / 2, H / 2).rotate(deg).scale(orient % 2 ? -1 : 1, 1);
+  frameInv = frameM.inverse();
+}
+
+// ---------- Papier, Füllung, Crutch (einmal vorgerendert) ----------
+function conePath(c, ox, oy) {
+  c.beginPath();
+  c.moveTo(ox, oy - r0); c.lineTo(ox + fullLen, oy - r1);
+  c.lineTo(ox + fullLen, oy + r1); c.lineTo(ox, oy + r0); c.closePath();
+}
+function buildBody() {
+  const pad = 4, bw = Math.ceil(fullLen), bh = Math.ceil(r1 * 2 + pad * 2);
+  body = document.createElement("canvas");
+  body.width = bw * dpr; body.height = bh * dpr;
+  const c = body.getContext("2d"); c.scale(dpr, dpr);
+  const oy = bh / 2;
+  c.save(); conePath(c, 0, oy); c.clip();
+  // Grundton: dünnes, leicht gebrochenes Weiß
+  c.fillStyle = "#ece5d6"; c.fillRect(0, 0, bw, bh);
+  // Füllung schimmert durchs Papier
+  const herb = ["rgba(74,86,38,", "rgba(96,78,40,", "rgba(58,64,30,", "rgba(110,96,52,"];
+  for (let i = 0; i < 1400; i++) {
+    const x = rand(filterLen + 2, bw), y = oy + rand(-1, 1) * r1, s = rand(1.5, 6);
+    const g = c.createRadialGradient(x, y, 0, x, y, s);
+    const col = herb[i % 4], a = rand(.05, .16);
+    g.addColorStop(0, col + a + ")"); g.addColorStop(1, col + "0)");
+    c.fillStyle = g; c.fillRect(x - s, y - s, s * 2, s * 2);
+  }
+  // Crutch: etwas dichter, Zickzack-Karton schimmert durch
+  c.fillStyle = "rgba(226,212,184,.75)"; c.fillRect(0, 0, filterLen, bh);
+  c.strokeStyle = "rgba(150,128,96,.28)"; c.lineWidth = 1.2;
+  for (let k = 0; k < 3; k++) {
+    c.beginPath();
+    const x = filterLen * (0.25 + k * 0.25);
+    for (let j = 0; j <= 6; j++) c.lineTo(x + (j % 2 ? 6 : -6), oy - r0 + (j / 6) * r0 * 2);
+    c.stroke();
+  }
+  c.strokeStyle = "rgba(140,120,90,.35)"; c.lineWidth = 1;
+  c.beginPath(); c.moveTo(filterLen, 0); c.lineTo(filterLen, bh); c.stroke();
+  // Papierfasern
+  for (let i = 0; i < 900; i++) {
+    const x = rand(0, bw), y = oy + rand(-1, 1) * r1, len = rand(8, 40);
+    c.strokeStyle = Math.random() < .5 ? "rgba(255,255,255,.10)" : "rgba(90,70,40,.04)";
+    c.lineWidth = rand(.4, 1);
+    c.beginPath(); c.moveTo(x, y); c.lineTo(x + len, y + rand(-1.5, 1.5)); c.stroke();
+  }
+  // Klebenaht
+  c.strokeStyle = "rgba(190,175,140,.45)"; c.lineWidth = 1.4;
+  c.beginPath(); c.moveTo(0, oy - r0 * .32); c.lineTo(bw, oy - r1 * .32); c.stroke();
+  c.strokeStyle = "rgba(255,255,255,.18)"; c.lineWidth = 1;
+  c.beginPath(); c.moveTo(0, oy - r0 * .32 - 1.5); c.lineTo(bw, oy - r1 * .32 - 1.5); c.stroke();
+  // Knitterfalten
+  for (let i = 0; i < 40; i++) {
+    const x = rand(filterLen, bw), y = oy + rand(-.8, .8) * r1, len = rand(6, 22), a = rand(-.9, .9);
+    c.lineWidth = rand(.6, 1.4);
+    c.strokeStyle = "rgba(255,255,255,.22)";
+    c.beginPath(); c.moveTo(x, y); c.lineTo(x + Math.cos(a) * len, y + Math.sin(a) * len); c.stroke();
+    c.strokeStyle = "rgba(60,45,25,.10)";
+    c.beginPath(); c.moveTo(x + 1, y + 1.2); c.lineTo(x + 1 + Math.cos(a) * len, y + 1.2 + Math.sin(a) * len); c.stroke();
+  }
+  // Zylinder-Schattierung, Spalte für Spalte (Kegelform)
+  for (let x = 0; x < bw; x += 3) {
+    const r = r0 + (r1 - r0) * (x / fullLen);
+    const g = c.createLinearGradient(0, oy - r, 0, oy + r);
+    g.addColorStop(0, "rgba(40,30,20,.45)");
+    g.addColorStop(.12, "rgba(40,30,20,.05)");
+    g.addColorStop(.28, "rgba(255,255,255,.38)");
+    g.addColorStop(.42, "rgba(255,255,255,0)");
+    g.addColorStop(.75, "rgba(30,20,10,.18)");
+    g.addColorStop(1, "rgba(15,10,5,.75)");
+    c.fillStyle = g; c.fillRect(x, oy - r, 3, r * 2);
+  }
+  c.restore();
+}
+
+function buildAsh() {
+  const w = Math.ceil(r1 * 10), h = Math.ceil(r1 * 2.2);
+  ashTex = document.createElement("canvas"); ashTex.width = w; ashTex.height = h;
+  const c = ashTex.getContext("2d");
+  c.fillStyle = "#8c867e"; c.fillRect(0, 0, w, h);
+  for (let i = 0; i < 2500; i++) {
+    const v = Math.floor(rand(60, 190));
+    c.fillStyle = `rgba(${v},${v - 4},${v - 10},${rand(.15, .5)})`;
+    c.fillRect(rand(0, w), rand(0, h), rand(1, 4), rand(1, 3));
+  }
+  // Risse und Ringe der Asche
+  c.lineCap = "round";
+  for (let i = 0; i < 60; i++) {
+    c.strokeStyle = `rgba(30,28,26,${rand(.3, .7)})`; c.lineWidth = rand(.6, 1.8);
+    let x = rand(0, w), y = rand(0, h);
+    c.beginPath(); c.moveTo(x, y);
+    for (let j = 0; j < 5; j++) { x += rand(-6, 6); y += rand(-10, 10); c.lineTo(x, y); }
+    c.stroke();
+  }
+  for (let x = 0; x < w; x += rand(6, 18)) {
+    c.strokeStyle = `rgba(35,32,30,${rand(.2, .45)})`; c.lineWidth = rand(.8, 2);
+    c.beginPath(); c.moveTo(x, 0); c.bezierCurveTo(x + rand(-5, 5), h * .3, x + rand(-5, 5), h * .7, x + rand(-4, 4), h); c.stroke();
+  }
+}
+
+function buildSmoke() {
+  smokeSprite = document.createElement("canvas"); smokeSprite.width = smokeSprite.height = 128;
+  const c = smokeSprite.getContext("2d");
+  for (let i = 0; i < 14; i++) {
+    const x = 64 + rand(-18, 18), y = 64 + rand(-18, 18), r = rand(20, 44);
+    const g = c.createRadialGradient(x, y, 0, x, y, r);
+    g.addColorStop(0, "rgba(215,220,230,.22)"); g.addColorStop(1, "rgba(215,220,230,0)");
+    c.fillStyle = g; c.fillRect(0, 0, 128, 128);
+  }
+}
+
+function buildEmberDots() {
+  emberDots = Array.from({ length: 26 }, () => ({ d: Math.pow(Math.random(), 1.6), f: rand(-.9, .9), ph: rand(0, 6), s: rand(.6, 1.4) }));
+}
+
+// ---------- Brandkante ----------
+function edgeOff(f, R) {
+  return (0.5 * Math.sin(f * 2.7 + bx * 0.031 + seeds[0]) + 0.35 * Math.sin(f * 6.1 - bx * 0.047 + seeds[1]) + 0.15 * Math.sin(f * 11 + bx * 0.09 + seeds[2])) * R * 0.22;
+}
+function bodyClip(c, R) {
+  c.beginPath();
+  c.moveTo(x0, -r0);
+  for (let i = 0; i <= 20; i++) { const f = -1 + i / 10; c.lineTo(bx + edgeOff(f, R), f * radius(bx)); }
+  c.lineTo(x0, r0); c.closePath();
+}
+
+// ---------- Partikel ----------
+function emitSmoke(x, y, o) {
+  if (smoke.length > 700) return;
+  smoke.push(Object.assign({ x, y, vx: rand(-4, 4), vy: rand(-38, -22), s: r1 * rand(.25, .45), gs: r1 * rand(.8, 1.4), a: rand(.3, .55), life: 0, max: rand(3.5, 6), rot: rand(0, 6), vr: rand(-.6, .6), ph: rand(0, 6), sx: rand(.6, 1) }, o || {}));
+}
+function exhale() {
+  const R = r1;
+  let n = 0;
+  const id = setInterval(() => {
+    for (let i = 0; i < 5; i++) emitSmoke(x0 + rand(0, R), rand(-R, R * .6), { vx: L * rand(.18, .38), vy: rand(-30, 5), s: R * rand(1.5, 2.5), gs: R * rand(3, 6), a: rand(.22, .4), max: rand(3, 5.5), drag: 1.1 });
+    if (++n > 24) clearInterval(id);
+  }, 45);
+  breath(false);
+}
+
+// ---------- Sound ----------
+let ac, crackleGain, hissGain, noiseBuf;
+function initAudio() {
+  if (ac) return;
+  try {
+    ac = new (window.AudioContext || window.webkitAudioContext)();
+    noiseBuf = ac.createBuffer(1, ac.sampleRate * 2, ac.sampleRate);
+    const d = noiseBuf.getChannelData(0);
+    for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+    // Knistern: seltene Klicks
+    const cb = ac.createBuffer(1, ac.sampleRate * 2, ac.sampleRate), cd = cb.getChannelData(0);
+    for (let i = 0; i < cd.length; i++) if (Math.random() < .0009) { const amp = rand(.3, 1); for (let j = 0; j < 60 && i + j < cd.length; j++) cd[i + j] += (Math.random() * 2 - 1) * amp * Math.exp(-j / 9); }
+    const cs = ac.createBufferSource(); cs.buffer = cb; cs.loop = true;
+    const hp = ac.createBiquadFilter(); hp.type = "highpass"; hp.frequency.value = 1800;
+    crackleGain = ac.createGain(); crackleGain.gain.value = 0;
+    cs.connect(hp).connect(crackleGain).connect(ac.destination); cs.start();
+    // Ziehgeräusch: gefiltertes Rauschen
+    const ns = ac.createBufferSource(); ns.buffer = noiseBuf; ns.loop = true;
+    const bp = ac.createBiquadFilter(); bp.type = "bandpass"; bp.frequency.value = 900; bp.Q.value = .7;
+    hissGain = ac.createGain(); hissGain.gain.value = 0;
+    ns.connect(bp).connect(hissGain).connect(ac.destination); ns.start();
+  } catch (e) { ac = null; }
+}
+function breath(inhale) {
+  if (!ac) return;
+  const t = ac.currentTime;
+  if (!inhale) {
+    const s = ac.createBufferSource(); s.buffer = noiseBuf;
+    const f = ac.createBiquadFilter(); f.type = "lowpass"; f.frequency.value = 1300;
+    const g = ac.createGain(); g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(.16, t + .15); g.gain.exponentialRampToValueAtTime(.001, t + 1.6);
+    s.connect(f).connect(g).connect(ac.destination); s.start(t); s.stop(t + 1.7);
+  }
+}
+
+// ---------- Zeichnen ----------
+function drawFlame(x, y, t) {
+  const h = r1 * 3.2, w = r1 * .9, fl = 1 + Math.sin(t * 31) * .06 + Math.sin(t * 17) * .05;
+  ctx.save(); ctx.globalCompositeOperation = "lighter";
+  ctx.translate(x, y); ctx.scale(1, fl);
+  const g = ctx.createRadialGradient(0, -h * .25, 0, 0, -h * .2, h * .7);
+  g.addColorStop(0, "rgba(255,250,220,.95)"); g.addColorStop(.35, "rgba(255,190,70,.75)"); g.addColorStop(.7, "rgba(255,100,20,.25)"); g.addColorStop(1, "rgba(255,60,0,0)");
+  ctx.fillStyle = g;
+  ctx.beginPath(); ctx.moveTo(0, -h + Math.sin(t * 23) * w * .3);
+  ctx.bezierCurveTo(w, -h * .4, w * .8, 0, 0, h * .05); ctx.bezierCurveTo(-w * .8, 0, -w, -h * .4, 0, -h + Math.sin(t * 23) * w * .3); ctx.fill();
+  const b = ctx.createRadialGradient(0, 0, 0, 0, 0, w * .7);
+  b.addColorStop(0, "rgba(80,130,255,.7)"); b.addColorStop(1, "rgba(80,130,255,0)");
+  ctx.fillStyle = b; ctx.fillRect(-w, -w, w * 2, w * 2);
+  ctx.restore();
+}
+
+function render(t) {
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  // Hintergrund: dunkles Zimmer, leichte Vignette
+  const bg = ctx.createRadialGradient(W / 2, H / 2, 0, W / 2, H / 2, L * .7);
+  bg.addColorStop(0, "#1a1714"); bg.addColorStop(1, "#060505");
+  ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
+
+  ctx.setTransform(new DOMMatrix([dpr, 0, 0, dpr, 0, 0]).multiply(frameM));
+  if (haze > .02) ctx.rotate(Math.sin(t * .6) * haze * .012);
+  const R = radius(bx), lit = state === "lit" || state === "lighting";
+
+  // Schein auf der Unterlage / Umgebung
+  if (lit) {
+    const ga = .05 + heat * .22;
+    const halo = ctx.createRadialGradient(bx, 0, 0, bx, 0, R * 7);
+    halo.addColorStop(0, `rgba(255,120,35,${ga})`); halo.addColorStop(1, "rgba(255,90,20,0)");
+    ctx.save(); ctx.globalCompositeOperation = "lighter"; ctx.fillStyle = halo; ctx.fillRect(bx - R * 7, -R * 7, R * 14, R * 14); ctx.restore();
+  }
+
+  // Papierkörper
+  ctx.save(); bodyClip(ctx, R); ctx.clip();
+  ctx.drawImage(body, x0, -r1 - 4 + 0, fullLen, r1 * 2 + 8);
+  if (state !== "unlit") {
+    // Verkohlung entlang der Glutkante
+    const cg = ctx.createLinearGradient(bx - R * 1.6, 0, bx + R * .3, 0);
+    cg.addColorStop(0, "rgba(160,120,60,0)"); cg.addColorStop(.45, "rgba(140,95,40,.35)"); cg.addColorStop(.75, "rgba(55,32,18,.85)"); cg.addColorStop(1, "rgba(18,10,6,1)");
+    ctx.fillStyle = cg; ctx.fillRect(bx - R * 1.6, -R * 1.2, R * 2, R * 2.4);
+  }
+  ctx.restore();
+
+  // Gedrehtes Ende (unangezündet / beim Anzünden)
+  if (state === "unlit" || (state === "lighting" && lightT < .6)) {
+    const k = state === "unlit" ? 1 : 1 - lightT / .6;
+    ctx.save();
+    ctx.beginPath(); ctx.moveTo(burnStart - 1, -r1); ctx.quadraticCurveTo(burnStart + r1 * .6 * k, -r1 * .3, burnStart + r1 * 1.3 * k, -r1 * .05);
+    ctx.lineTo(burnStart + r1 * 1.3 * k, r1 * .1); ctx.quadraticCurveTo(burnStart + r1 * .5 * k, r1 * .5, burnStart - 1, r1); ctx.closePath();
+    const tg = ctx.createLinearGradient(0, -r1, 0, r1);
+    tg.addColorStop(0, "#8a8274"); tg.addColorStop(.3, "#f2ece0"); tg.addColorStop(1, "#4a4236");
+    ctx.fillStyle = state === "lighting" ? `rgba(60,35,20,${1 - k * .4})` : tg; ctx.fill();
+    ctx.strokeStyle = "rgba(80,60,40,.35)"; ctx.lineWidth = 1;
+    for (let i = 1; i < 4; i++) { ctx.beginPath(); ctx.moveTo(burnStart, -r1 + i * r1 * .5); ctx.quadraticCurveTo(burnStart + r1 * .5 * k, -r1 * .2 + i * .1 * r1, burnStart + r1 * 1.2 * k, 0); ctx.stroke(); }
+    ctx.restore();
+  }
+
+  // Asche
+  const ashLen = ashStart - bx;
+  if (ashLen > 1) {
+    ctx.save();
+    ctx.beginPath();
+    const aR = R * .96, tip = ashStart;
+    ctx.moveTo(bx - 1, -aR);
+    for (let x = bx; x <= tip - aR * .4; x += 6) ctx.lineTo(x, -aR + Math.sin(x * .3 + seeds[0]) * R * .03);
+    ctx.bezierCurveTo(tip + aR * .1, -aR * .9, tip + aR * .2, aR * .7, tip - aR * .4, aR * .95);
+    for (let x = tip - aR * .4; x >= bx; x -= 6) ctx.lineTo(x, aR + Math.sin(x * .27 + seeds[1]) * R * .03);
+    ctx.closePath(); ctx.clip();
+    ctx.drawImage(ashTex, tip - ashTex.width + aR * .3, -ashTex.height / 2);
+    const ag = ctx.createLinearGradient(0, -aR, 0, aR);
+    ag.addColorStop(0, "rgba(255,255,255,.12)"); ag.addColorStop(.25, "rgba(255,255,255,.22)"); ag.addColorStop(.6, "rgba(0,0,0,.1)"); ag.addColorStop(1, "rgba(0,0,0,.7)");
+    ctx.fillStyle = ag; ctx.fillRect(bx - 2, -aR, ashLen + aR, aR * 2);
+    // dunkler Ring direkt an der Glut
+    const dg = ctx.createLinearGradient(bx, 0, bx + R * .9, 0);
+    dg.addColorStop(0, "rgba(15,10,8,.95)"); dg.addColorStop(1, "rgba(15,10,8,0)");
+    ctx.fillStyle = dg; ctx.fillRect(bx - 2, -aR, R, aR * 2);
+    ctx.restore();
+  }
+
+  // Glut
+  if (lit) {
+    const I = clamp((state === "lighting" ? lightT * .9 : .32) + heat * .85, 0, 1.2);
+    ctx.save(); ctx.globalCompositeOperation = "lighter";
+    for (let i = 0; i <= 12; i++) {
+      const f = -1 + i / 6, fl = .75 + .25 * Math.sin(t * (7 + i) + i * 2.1) + .15 * Math.sin(t * 23 + i);
+      const x = bx + edgeOff(f, R) + R * .08, y = f * R * .9, rr = R * (.32 + .22 * heat) * fl;
+      const a = I * fl * (1 - Math.abs(f) * .35);
+      const g = ctx.createRadialGradient(x, y, 0, x, y, rr);
+      g.addColorStop(0, `rgba(255,236,170,${a * .9})`); g.addColorStop(.3, `rgba(255,140,35,${a * .7})`); g.addColorStop(.7, `rgba(210,45,10,${a * .3})`); g.addColorStop(1, "rgba(120,0,0,0)");
+      ctx.fillStyle = g; ctx.fillRect(x - rr, y - rr, rr * 2, rr * 2);
+    }
+    // Glutnester in der Asche
+    for (const e of emberDots) {
+      const x = bx + e.d * Math.min(ashLen, R * 1.8), y = e.f * R * .85;
+      const a = I * (1 - e.d) * (.4 + .6 * Math.max(0, Math.sin(t * 3 * e.s + e.ph)));
+      const rr = R * .12 * e.s;
+      const g = ctx.createRadialGradient(x, y, 0, x, y, rr);
+      g.addColorStop(0, `rgba(255,190,90,${a})`); g.addColorStop(1, "rgba(255,60,0,0)");
+      ctx.fillStyle = g; ctx.fillRect(x - rr, y - rr, rr * 2, rr * 2);
+    }
+    ctx.restore();
+  }
+
+  // Funken
+  ctx.save(); ctx.globalCompositeOperation = "lighter";
+  for (const s of sparks) {
+    const a = 1 - s.life / s.max;
+    ctx.fillStyle = `rgba(255,${150 + 80 * a | 0},60,${a})`;
+    ctx.beginPath(); ctx.arc(s.x, s.y, s.r * a + .3, 0, 7); ctx.fill();
+  }
+  ctx.restore();
+
+  // fallende Asche
+  for (const p of ashFall) {
+    ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.rot); ctx.globalAlpha = clamp(1 - p.life / 1.6, 0, 1);
+    ctx.drawImage(ashTex, 0, 0, p.w, ashTex.height, -p.w / 2, -p.h / 2, p.w, p.h);
+    ctx.restore();
+  }
+
+  // Feuerzeug
+  if (state === "lighting" && lightT < 1.1) drawFlame(burnStart + r1 * .4, r1 * 2.9, t);
+
+  // Rauch
+  ctx.save(); ctx.globalCompositeOperation = "screen";
+  for (const p of smoke) {
+    const k = p.life / p.max, a = p.a * Math.sin(Math.PI * Math.min(1, k * 1.05)) * (1 - k);
+    if (a <= .002) continue;
+    const s = p.s + p.gs * k * 3;
+    ctx.globalAlpha = a;
+    ctx.translate(p.x, p.y); ctx.rotate(p.rot); ctx.scale(p.sx, 1);
+    ctx.drawImage(smokeSprite, -s, -s, s * 2, s * 2);
+    ctx.setTransform(new DOMMatrix([dpr, 0, 0, dpr, 0, 0]).multiply(frameM));
+  }
+  ctx.restore();
+
+  // Dunst nach ein paar Zügen
+  if (haze > .01) {
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.fillStyle = `rgba(190,195,205,${Math.min(.22, haze * .2)})`; ctx.fillRect(0, 0, W, H);
+  }
+}
+
+// ---------- Simulation ----------
+function update(dt, t) {
+  const R = radius(bx);
+  if (state === "lighting") {
+    lightT += dt;
+    heat = clamp(lightT * .5, 0, .6);
+    if (lightT > .4 && bx > burnStart - R * .4) bx -= dt * R * .5;
+    if (lightT > 1.4) state = "lit";
+  }
+  if (state === "lit") {
+    heat += ((drawing ? 1 : 0) - heat) * dt * (drawing ? 2.6 : 1.3);
+    const span = burnStart - burnEnd;
+    bx -= span * dt * (0.0035 + heat * 0.028);
+    if (drawing) { drawTime += dt; haze = Math.min(1.2, haze + dt * .035); }
+    if (bx <= burnEnd) { bx = burnEnd; finish(); }
+    // Asche bricht irgendwann von selbst ab
+    if (ashStart - bx > R * rand(3.2, 30)) flick(false);
+    if (ac) {
+      crackleGain.gain.setTargetAtTime(drawing ? .55 : .04, ac.currentTime, .08);
+      hissGain.gain.setTargetAtTime(drawing ? .045 : 0, ac.currentTime, .12);
+    }
+  }
+  haze = Math.max(0, haze - dt * .008);
+
+  // Rauch aus der Glut
+  if (state === "lit" || state === "lighting") {
+    const rate = drawing ? 10 : 34;
+    const n = Math.random() < rate * dt % 1 ? Math.ceil(rate * dt) : Math.floor(rate * dt);
+    for (let i = 0; i < n; i++) emitSmoke(bx + R * rand(.1, .7), -R * rand(.2, .9));
+    if (drawing && Math.random() < dt * 9) sparks.push({ x: bx + R * .2, y: rand(-R, R) * .8, vx: rand(10, 70), vy: rand(-60, 10), r: rand(.6, 1.6), life: 0, max: rand(.3, .8) });
+  }
+  for (const p of smoke) {
+    p.life += dt;
+    const k = p.life / p.max;
+    const drag = p.drag || 0;
+    p.vx *= 1 - drag * dt; p.vx += Math.sin(p.y * .018 + t * .9 + p.ph) * 18 * dt * (1 + k * 3);
+    p.vy += (-12 - p.vy * .15) * dt;
+    p.x += p.vx * dt + Math.sin(t * 1.3 + p.ph) * k * 9 * dt;
+    p.y += p.vy * dt; p.rot += p.vr * dt;
+  }
+  smoke = smoke.filter(p => p.life < p.max);
+  for (const s of sparks) { s.life += dt; s.vy += 140 * dt; s.x += s.vx * dt; s.y += s.vy * dt; }
+  sparks = sparks.filter(s => s.life < s.max);
+  for (const p of ashFall) { p.life += dt; p.vy += 900 * dt; p.y += p.vy * dt; p.x += p.vx * dt; p.rot += p.vr * dt; }
+  ashFall = ashFall.filter(p => p.life < 1.6);
+}
+
+function flick(byHand) {
+  const len = ashStart - bx;
+  if (len < r1 * .4) return;
+  const R = radius(bx), keep = byHand ? 0 : len * rand(0, .3);
+  const w = len - keep;
+  ashFall.push({ x: bx + keep + w / 2, y: 0, w, h: R * 1.9, vx: rand(-20, 40), vy: byHand ? 60 : 0, rot: 0, vr: rand(-2, 2), life: 0 });
+  for (let i = 0; i < 16; i++) sparks.push({ x: bx + keep + rand(0, w), y: rand(-R, R) * .7, vx: rand(-40, 40), vy: rand(-30, 40), r: rand(.4, 1.2), life: 0, max: rand(.2, .6) });
+  ashStart = bx + keep;
+  buildEmberDots();
+}
+
+function finish() {
+  state = "out"; drawing = false; heat = 0;
+  if (ac) { crackleGain.gain.setTargetAtTime(0, ac.currentTime, .1); hissGain.gain.setTargetAtTime(0, ac.currentTime, .1); }
+  document.getElementById("endtxt").textContent = `${totalDrags} ${totalDrags === 1 ? "Zug" : "Züge"}. Nur noch Crutch übrig.`;
+  setTimeout(() => document.getElementById("end").classList.remove("gone"), 1400);
+}
+
+// ---------- Eingabe ----------
+let downAt = 0, downPt = null;
+cv.addEventListener("pointerdown", e => {
+  initAudio(); if (ac && ac.state === "suspended") ac.resume();
+  wakeUi();
+  downAt = performance.now(); downPt = frameInv.transformPoint(new DOMPoint(e.clientX, e.clientY));
+  if (state !== "lit") return;
+  const R = radius(bx);
+  if (ashStart - bx > R * .4 && downPt.x > bx && downPt.x < ashStart + R && Math.abs(downPt.y) < R * 2.5) { flick(true); downPt = null; return; }
+  drawing = true; drawTime = 0;
+});
+const release = () => {
+  if (!drawing) return;
+  drawing = false; totalDrags++;
+  if (drawTime > .45) setTimeout(exhale, 700);
+};
+addEventListener("pointerup", release); addEventListener("pointercancel", release);
+cv.addEventListener("contextmenu", e => e.preventDefault());
+
+document.getElementById("light").onclick = () => {
+  initAudio(); if (ac && ac.state === "suspended") ac.resume();
+  document.getElementById("start").classList.add("gone");
+  state = "lighting"; lightT = 0;
+  try { navigator.wakeLock && navigator.wakeLock.request("screen").catch(() => {}); } catch (e) {}
+  wakeUi();
+};
+document.getElementById("again").onclick = () => {
+  document.getElementById("end").classList.add("gone");
+  bx = burnStart; ashStart = bx; heat = 0; totalDrags = 0; smoke = []; ashFall = [];
+  state = "unlit";
+  document.getElementById("start").classList.remove("gone");
+};
+document.getElementById("flip").onclick = () => { orient = (orient + 1) % 4; buildFrame(); };
+document.getElementById("fs").onclick = () => {
+  const el = document.documentElement;
+  try { (document.fullscreenElement ? document.exitFullscreen() : (el.requestFullscreen || el.webkitRequestFullscreen).call(el))?.catch?.(() => {}); } catch (e) {}
+};
+let uiTimer;
+function wakeUi() { const u = document.getElementById("ui"); u.classList.remove("dim"); clearTimeout(uiTimer); uiTimer = setTimeout(() => u.classList.add("dim"), 3500); }
+
+addEventListener("resize", resize);
+resize(); wakeUi();
+let last = performance.now();
+function loop(now) {
+  const dt = Math.min(.05, (now - last) / 1000); last = now;
+  update(dt, now / 1000); render(now / 1000);
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
