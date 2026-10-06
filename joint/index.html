@@ -346,6 +346,21 @@ function initAudio() {
     ns.connect(bp).connect(hissGain).connect(ac.destination); ns.start();
   } catch (e) { ac = null; }
 }
+// iOS hält den Audio-Kontext gern angehalten oder unterbricht ihn (Sperrbildschirm, Mikro-Freigabe, Anruf).
+// Darum bei jeder Berührung prüfen, fortsetzen und mit einem stillen Ton freischalten.
+function ensureAudio() {
+  if (ac && ac.state === "closed") ac = null;
+  initAudio();
+  if (!ac) return;
+  if (ac.state !== "running") ac.resume().catch(() => {});
+  try { const b = ac.createBuffer(1, 1, ac.sampleRate), src = ac.createBufferSource(); src.buffer = b; src.connect(ac.destination); src.start(0); } catch (e) {}
+}
+function setAudioSession(type) { try { if (navigator.audioSession) navigator.audioSession.type = type; } catch (e) {} }
+setAudioSession("playback");   // spielt auch bei Stummschalter
+document.addEventListener("pointerdown", () => { if (ac && ac.state !== "running") ensureAudio(); }, true);
+document.addEventListener("touchend", () => { if (ac && ac.state !== "running") ensureAudio(); }, true);
+document.addEventListener("visibilitychange", () => { if (!document.hidden && ac && ac.state !== "running") ac.resume().catch(() => {}); });
+
 // ---------- Zeichnen ----------
 function drawFlame(x, y, t) {
   const h = r1 * 3.2, w = r1 * .9, fl = 1 + Math.sin(t * 31) * .06 + Math.sin(t * 17) * .05;
@@ -545,7 +560,7 @@ function update(dt, t) {
     // Asche bricht irgendwann von selbst ab
     if (ashStart - bx > R * ashLimit) flick(false);
     if (ac) {
-      crackleGain.gain.setTargetAtTime(drawing ? (mode === "breath" ? .2 : .55) : .04, ac.currentTime, .08);
+      crackleGain.gain.setTargetAtTime(mode === "breath" ? 0 : drawing ? .55 : .04, ac.currentTime, .08);
       hissGain.gain.setTargetAtTime(drawing && mode === "finger" ? .045 : 0, ac.currentTime, .12);
     }
   }
@@ -620,7 +635,7 @@ let downAt = 0, downPt = null, pid = null, fingerX = 0, drawFrom = 0, moved = fa
 const toFrame = e => frameInv.transformPoint(new DOMPoint(e.clientX, e.clientY));
 const nearTip = pt => { const R = radius(bx); return !(pt.x < bx - R * 2.5 || pt.x > ashStart + R * 2 || Math.abs(pt.y) > R * 3.2); };
 cv.addEventListener("pointerdown", e => {
-  initAudio(); if (ac && ac.state === "suspended") ac.resume();
+  ensureAudio();
   if (state !== "lit" || pid !== null) return;
   const pt = toFrame(e);
   if (!nearTip(pt)) return;   // Ziehen (bzw. Abaschen) nur an der Glut
@@ -648,7 +663,7 @@ cv.addEventListener("pointerup", release); cv.addEventListener("pointercancel", 
 cv.addEventListener("contextmenu", e => e.preventDefault());
 
 document.getElementById("light").onclick = async () => {
-  initAudio(); if (ac && ac.state === "suspended") ac.resume();
+  ensureAudio();
   const motionP = prefKnock ? requestMotion() : Promise.resolve(false);
   if (prefMode === "breath") {
     status("Mikrofon wird angefragt …");
@@ -711,9 +726,16 @@ showPrefs();
 let micStream = null, micAna = null, micBins, micFloor = 1e-7, micInt = 0, micLastOn = 0, micDb = 0, micOnTime = 0;
 async function startMic() {
   if (!ac || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return false;
+  setAudioSession("play-and-record");
   try {
-    micStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: false, autoGainControl: false } });
-  } catch (e) { return false; }
+    micStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
+  } catch (e) { setAudioSession("playback"); return false; }
+  // Safari liefert über einen Audio-Kontext, der vor der Mikro-Freigabe entstand, oft nur Stille
+  // (andere Abtastrate nach dem Umschalten auf Aufnahme). Deshalb danach frisch anlegen.
+  try { await ac.close(); } catch (e) {}
+  ac = null; initAudio();
+  if (!ac) return false;
+  try { await ac.resume(); } catch (e) {}
   const src = ac.createMediaStreamSource(micStream);
   micAna = ac.createAnalyser(); micAna.fftSize = 1024; micAna.smoothingTimeConstant = .5;
   micBins = new Float32Array(micAna.frequencyBinCount);
@@ -724,6 +746,7 @@ async function startMic() {
 }
 function stopMic() {
   if (micStream) micStream.getTracks().forEach(t => t.stop());
+  if (micStream) setAudioSession("playback");
   micStream = null; micAna = null; micInt = 0; micBlow = 0; breathState = "idle"; lungs = 0; setCue(""); $("micHud").hidden = true;
   if (exhaleSrc === "mic") exhaleT = -1;
 }
@@ -732,7 +755,7 @@ function stopMic() {
 //  Pusten  = Wind-Rumpeln am Mikro (Schwerpunkt tief)          -> Ausatmen, solange Rauch in der Lunge ist
 // Beliebig viele Züge hintereinander sind möglich, ausgeatmet wird erst beim Pusten.
 let breathState = "idle", micLo = 0, micHi = 0, micTot = 0, loFloor = 1e-7, totFloor = 1e-7, micBlow = 0;
-let micOnSince = 0, micPrevSig = false, lungs = 0, lungsAt = 0, blowScore = .5, centroid = 0, lastBxBreath = 0, micHud = false;
+let evStart = 0, lungsBefore = 0, micOnSince = 0, micPrevSig = false, lungs = 0, lungsAt = 0, blowScore = .5, centroid = 0, lastBxBreath = 0, micHud = false;
 function setCue(t) { $("cue").hidden = !t; $("cue").textContent = t || ""; }
 function bandPower(lo, hi) {
   const hz = ac.sampleRate / micAna.fftSize; let p = 0;
@@ -769,32 +792,37 @@ function breathStep(dt) {
   }
   if (sig && wasSilent) micOnSince = now;
   micOnTime = sig ? (now - micOnSince) / 1000 : 0;   // echte Zeit, unabhängig von der Bildrate
-  const drawRaw = clamp((micHi - thr) / 14, 0, 1);
+  const drawRaw = clamp((micDb - thr) / 14, 0, 1);
   const blowRaw = clamp((micTot - thr) / 14, 0, 1.4);
 
   if (breathState === "idle") {
     if (micOnTime > .12 && state === "lit") {
-      breathState = blowScore > .55 ? "blow" : "draw";
-      if (breathState === "draw") { drawing = true; drawTime = 0; drawFrom = bx; lastBxBreath = bx; }
+      // Ziehen ist der Normalfall. Pusten zählt nur, wenn Rauch in der Lunge ist UND der Klang eindeutig nach Pusten klingt.
+      breathState = lungs > .05 && blowScore > .7 ? "blow" : "draw";
+      if (breathState === "draw") { drawing = true; drawTime = 0; drawFrom = bx; lastBxBreath = bx; evStart = now; lungsBefore = lungs; }
     }
   } else if (breathState === "draw") {
     lungs += Math.max(0, lastBxBreath - bx) / (L * .08); lastBxBreath = bx; lungsAt = now;
     if (silentFor > 300) { drawing = false; breathState = "idle"; if (drawFrom - bx > r1 * .15) totalDrags++; }
-    else if (blowScore > .72) { drawing = false; breathState = "blow"; if (drawFrom - bx > r1 * .15) totalDrags++; }
+    else if (now - evStart > 6000) {
+      // so lange zieht niemand: das ist Dauerlärm, als neues Grundrauschen übernehmen
+      drawing = false; breathState = "idle"; micFloor = hi; loFloor = lo; totFloor = tot;
+    }
+    else if (lungsBefore > .05 && blowScore > .85) { drawing = false; breathState = "blow"; if (drawFrom - bx > r1 * .15) totalDrags++; }
   } else if (breathState === "blow") {
     lungsAt = now;
     if (lungs > 0 && exhaleT < 0) exhale(1, "mic");
-    if (lungs > 0) { exhaleStrength = clamp(.55 + lungs * .5, .55, 1.6); lungs = Math.max(0, lungs - dt * micBlow * .45); }
+    if (lungs > 0) { exhaleStrength = clamp(.55 + lungs * .5, .55, 1.6); lungs = Math.max(0, lungs - dt * micBlow * .3); }
     else if (exhaleSrc === "mic") exhaleT = -1;
     if (silentFor > 350) { breathState = "idle"; if (exhaleSrc === "mic") exhaleT = -1; }
-    else if (blowScore < .28 && state === "lit") { breathState = "draw"; drawing = true; drawTime = 0; drawFrom = bx; lastBxBreath = bx; if (exhaleSrc === "mic") exhaleT = -1; }
+    else if (blowScore < .45 && state === "lit") { breathState = "draw"; drawing = true; drawTime = 0; drawFrom = bx; lastBxBreath = bx; evStart = now; lungsBefore = lungs; if (exhaleSrc === "mic") exhaleT = -1; }
   }
   micInt += ((breathState === "draw" ? drawRaw : 0) - micInt) * Math.min(1, dt * 10);
   micBlow += ((breathState === "blow" && lungs > 0 ? blowRaw : 0) - micBlow) * Math.min(1, dt * 10);
   if (lungs > 0 && now - lungsAt > 25000) lungs = 0;   // zu lange angehalten: Rauch ist weg
   setCue(lungs > .05 && breathState !== "blow" && breathState !== "draw" ? "Reinpusten zum Ausatmen" : "");
   if (micHud) $("micHud").textContent =
-    `${{ idle: "Ruhe", draw: "Ziehen", blow: "Pusten" }[breathState]} · Schwerpunkt ${(centroid / 1000).toFixed(1)} kHz · tief ${micLo | 0} dB / hoch ${micHi | 0} dB · Puste-Wert ${blowScore.toFixed(2)} · Lunge ${lungs.toFixed(1)}`;
+    `${{ idle: "Ruhe", draw: "Ziehen", blow: "Pusten" }[breathState]} · Schwerpunkt ${(centroid / 1000).toFixed(1)} kHz · tief ${micLo | 0} dB / hoch ${micHi | 0} dB · Puste-Wert ${blowScore.toFixed(2)} · Lunge ${lungs.toFixed(1)} · Audio ${ac.state}`;
 }
 
 // Klopfen auf den Rahmen = Ruck im Beschleunigungssensor; Empfindlichkeit wird beim Anzünden festgelegt
