@@ -111,7 +111,7 @@ button:focus-visible { outline: 2px solid var(--ember); outline-offset: 3px; }
 const cv = document.getElementById("c"), mainCtx = cv.getContext("2d");
 let ctx = mainCtx;   // wird beim Verbiegen kurz auf eine Zwischenebene umgeschaltet
 const rand = (a, b) => a + Math.random() * (b - a);
-const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const clamp = (v, a, b) => Number.isFinite(v) ? Math.max(a, Math.min(b, v)) : (v === Infinity ? b : a);
 let bodyPad = 8, W, H, dpr, L, S, r0, r1, x0, fullLen, filterLen, burnStart, burnEnd;
 let body, ashTex, smokeSprites = [], frameM, frameInv, smokeLayer = null, sctx = null;
 let orient = 0;           // 0: Filter unten rechts, 1: Filter unten links
@@ -563,7 +563,7 @@ function musicStep(step, t) {
 }
 // ---------- Eigene Musik: liegt nur lokal auf dem Gerät (IndexedDB), wird nie hochgeladen ----------
 const SNIP = 10;   // Sekunden pro Schnipsel
-let customBlob = null, customBuf = null, customName = "", cSrc = null, cGain = null, cFilter = null, cAc = null, lastSnip = -1;
+let customNorm = 1, customBlob = null, customBuf = null, customName = "", cSrc = null, cGain = null, cFilter = null, cAc = null, lastSnip = -1;
 function idb() {
   return new Promise((res, rej) => { try { const r = indexedDB.open("handy-joint", 1); r.onupgradeneeded = () => r.result.createObjectStore("files"); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); } catch (e) { rej(e); } });
 }
@@ -581,6 +581,9 @@ async function decodeCustom() {
   try {
     const raw = await customBlob.arrayBuffer();
     customBuf = await new Promise((res, rej) => ac.decodeAudioData(raw, res, rej));
+    // Spitzenpegel messen, damit leise Aufnahmen auf volle Lautstärke gebracht werden
+    let pk = 0; for (let c = 0; c < customBuf.numberOfChannels; c++) { const d = customBuf.getChannelData(c); for (let i = 0; i < d.length; i += 4) pk = Math.max(pk, Math.abs(d[i])); }
+    customNorm = pk > .01 ? Math.min(8, .98 / pk) : 1;
     showCustom();
   } catch (e) { showCustom("Diese Datei kann der Browser nicht abspielen. Probier MP3 oder M4A."); }
 }
@@ -596,12 +599,19 @@ document.getElementById("musicClear").onclick = async () => { customBlob = null;
 idbGet("music").then(v => { if (v && v.blob) { customBlob = v.blob; customName = v.name || "Audiodatei"; showCustom(); decodeCustom(); } }).catch(() => {});
 function customStart() {
   if (cAc !== ac) {
-    cAc = ac; cFilter = ac.createBiquadFilter(); cFilter.type = "lowpass"; cFilter.connect(ac.destination);
+    // laut fürs Handy: normalisieren, verdichten, anheben, weich begrenzen
+    cAc = ac; cFilter = ac.createBiquadFilter(); cFilter.type = "lowpass";
+    const comp = ac.createDynamicsCompressor(); comp.threshold.value = -26; comp.knee.value = 6; comp.ratio.value = 8; comp.attack.value = .002; comp.release.value = .12;
+    const makeup = ac.createGain(); makeup.gain.value = 3.2;
+    const clip = ac.createWaveShaper(), cc = new Float32Array(2048);
+    for (let i = 0; i < 2048; i++) { const x = i / 1023.5 - 1; cc[i] = Math.tanh(1.4 * x) / Math.tanh(1.4) * .98; }
+    clip.curve = cc;
+    cFilter.connect(comp).connect(makeup).connect(clip).connect(ac.destination);
   }
   cFilter.frequency.value = musicQuiet() ? 800 : 20000;
   cGain = ac.createGain(); cGain.connect(cFilter);
   const now = ac.currentTime;
-  cGain.gain.setValueAtTime(0, now); cGain.gain.linearRampToValueAtTime(musicQuiet() ? .6 : 1, now + .03);
+  cGain.gain.setValueAtTime(0, now); cGain.gain.linearRampToValueAtTime(customNorm * (musicQuiet() ? .45 : 1), now + .03);
   playSnippet(now);
 }
 function playSnippet(when) {
@@ -1764,6 +1774,7 @@ let evStart = 0, lungsBefore = 0, micOnSince = 0, micPrevSig = false, lungs = 0,
 function setCue(t) { $("cue").hidden = !t; $("cue").textContent = t || ""; }
 function bandPower(lo, hi) {
   const hz = ac.sampleRate / micAna.fftSize; let p = 0;
+  for (let i = 0; i < micBins.length; i++) if (!Number.isFinite(micBins[i])) micBins[i] = -160;   // ungültige Messwerte vom Mikro
   for (let i = Math.max(1, Math.floor(lo / hz)); i < Math.min(micBins.length, Math.floor(hi / hz)); i++) p += Math.pow(10, micBins[i] / 10);
   return p;
 }
@@ -1884,11 +1895,41 @@ function requestMotion() {
 addEventListener("resize", resize);
 resize();
 let last = performance.now();
+// Sicherheitsnetz: ungültige Zahlen (z. B. ein NaN vom Mikro) reparieren und den Loop niemals abbrechen lassen
+let safe = null, frameErrors = 0;
+const ok = v => typeof v === "number" && Number.isFinite(v);
+function sanitize() {
+  if (safe) {
+    if (!ok(bx)) bx = safe.bx;
+    if (!ok(ashStart)) ashStart = Math.max(bx, safe.ashStart);
+    if (!ok(fingerX)) fingerX = bx;
+    if (!ok(stubFrom)) stubFrom = bx;
+  }
+  for (const k of ["heat", "micInt", "micBlow", "lungs", "exhaleLvl", "haze", "exhaleStrength", "blowScore", "micDb", "micHi", "micLo", "micTot"]) {
+    try { if (!ok(eval(k))) eval(k + " = 0"); } catch (e) {}
+  }
+  if (!ok(micFloor) || micFloor <= 0) micFloor = 1e-7;
+  if (!ok(loFloor) || loFloor <= 0) loFloor = 1e-7;
+  if (!ok(totFloor) || totFloor <= 0) totFloor = 1e-7;
+  smoke = smoke.filter(q => ok(q.x) && ok(q.y) && ok(q.vx) && ok(q.vy));
+  sparks = sparks.filter(q => ok(q.x) && ok(q.y) && ok(q.vx) && ok(q.vy));
+}
 function loop(now) {
-  const dt = Math.min(.05, (now - last) / 1000); last = now;
-  update(dt, now / 1000);
-  if (dive.phase !== "none") renderDive(now / 1000); else render(now / 1000);
-  requestAnimationFrame(loop);
+  requestAnimationFrame(loop);   // zuerst neu anmelden, damit ein Fehler den Loop nicht stoppt
+  const dt = Math.min(.05, Math.max(0, (now - last) / 1000)) || 0; last = now;
+  try {
+    update(dt, now / 1000);
+    sanitize();
+    if (dive.phase !== "none") renderDive(now / 1000); else render(now / 1000);
+    safe = { bx, ashStart };
+  } catch (e) {
+    ctx = mainCtx;               // falls der Fehler beim Verbiegen auf der Zwischenebene passierte
+    try { ctx.restore(); } catch (e2) {}
+    frameErrors++;
+    if (frameErrors < 5) console.error(e);
+    sanitize();
+    if (frameErrors > 30 && dive.phase !== "none") { dive.phase = "none"; if (state === "dive") state = "lit"; worldAudio(false); }
+  }
 }
 requestAnimationFrame(loop);
 </script>
