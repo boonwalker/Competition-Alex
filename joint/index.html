@@ -425,30 +425,30 @@ document.addEventListener("pointerdown", () => { if (ac && ac.state !== "running
 document.addEventListener("touchend", () => { if (ac && ac.state !== "running") ensureAudio(); }, true);
 document.addEventListener("visibilitychange", () => { if (!document.hidden && ac && ac.state !== "running") ac.resume().catch(() => {}); });
 
-// ---------- Musik: eigene fröhliche Reggae-Nummer, live synthetisiert ----------
-// Eigenkomposition im Stil gut gelaunter Sommer-Reggae-Hits: G-Dur, 86 BPM, Achtelraster.
-// 8 Takte: G – C – G – D | G – C – D – G. Gepfiffene Hook, hüpfender Bass,
-// Skank auf 2 und 4 mit Nachschlag, Kick auf 1 und 3, Rimshot auf 3.
-const BPM = 86, STEP = 60 / BPM / 2;
-const N = { D2: 73.42, E2: 82.41, Fs2: 92.5, G2: 98, A2: 110, B2: 123.47, C3: 130.81, D3: 146.83, E3: 164.81,
-  Fs3: 185, G3: 196, A3: 220, B3: 246.94, C4: 261.63, D4: 293.66, E4: 329.63,
-  G4: 392, A4: 440, B4: 493.88, C5: 523.25, D5: 587.33, E5: 659.25, G5: 783.99 };
-const CH = { G: [N.G3, N.B3, N.D4], C: [N.G3, N.C4, N.E4], D: [N.Fs3, N.A3, N.D4] };
+// ---------- Musik: eigene gut gelaunte A-cappella-Nummer, live synthetisiert ----------
+// Stilvorlage "Don't Worry Be Happy" (Bobby McFerrin): gemütlicher Swing um 74 BPM in B-Dur, alles "mit dem Mund":
+// gesungener Bass, Fingerschnipsen auf 2 und 4, Brust-Klopfen auf 1 und 3, "Uuh"-Chor auf den Offbeats, gepfiffene Melodie.
+// Akkorde B – C#m – E – B (8 Takte). Melodie und Basslinie sind eigene Erfindungen.
+const BPM = 74, STEP = 60 / BPM / 2, SWING = .33;
+const N = { E2: 82.41, Fs2: 92.5, Gs2: 103.83, As2: 116.54, B2: 123.47, Cs3: 138.59, Ds3: 155.56, E3: 164.81,
+  B3: 246.94, Cs4: 277.18, Ds4: 311.13, E4: 329.63, Fs4: 369.99, Gs4: 415.3,
+  B4: 493.88, Cs5: 554.37, Ds5: 622.25, Fs5: 739.99, Gs5: 830.61 };
+const CH = { B: [N.B3, N.Ds4, N.Fs4], Csm: [N.Cs4, N.E4, N.Gs4], E: [N.B3, N.E4, N.Gs4] };
 const BASSP = {
-  G: [N.G2, 0, 0, N.G2, N.B2, 0, N.D3, N.B2],
-  C: [N.C3, 0, 0, N.C3, N.E3, 0, N.G2, N.E2],
-  D: [N.D3, 0, 0, N.D3, N.Fs2, 0, N.A2, N.Fs2],
+  B: [N.B2, 0, 0, N.Fs2, N.B2, 0, N.As2, 0],
+  Csm: [N.Cs3, 0, 0, N.Gs2, N.Cs3, 0, N.E3, 0],
+  E: [N.E2, 0, 0, N.B2, N.E3, 0, N.Gs2, 0],
 };
-const SONG = ["G", "C", "G", "D", "G", "C", "D", "G"];
-const HOOK = [   // gepfiffene Melodie, ein Ton pro Achtel (0 = Pause), Längen in Achteln
-  [[N.B4, 2], 0, [N.D5, 2], 0, [N.B4, 1], [N.A4, 1], [N.G4, 2], 0],
-  [[N.E4, 2], 0, [N.G4, 1], [N.A4, 1], 0, [N.G4, 1], [N.E4, 2], 0],
-  [[N.D5, 2], 0, [N.B4, 1], 0, [N.D5, 1], [N.E5, 1], [N.D5, 2], 0],
-  [[N.A4, 3], 0, 0, [N.B4, 1], [N.A4, 2], 0, [N.G4, 1], [N.A4, 1]],
-  [[N.B4, 2], 0, [N.D5, 2], 0, [N.B4, 1], [N.A4, 1], [N.G4, 2], 0],
-  [[N.E5, 2], 0, [N.E5, 1], [N.D5, 1], [N.E5, 2], 0, [N.G5, 2], 0],
-  [[N.A4, 1], 0, [N.D5, 2], 0, [N.C5, 1], [N.B4, 1], [N.A4, 2], 0],
-  [[N.G4, 6], 0, 0, 0, 0, 0, 0, 0],
+const SONG = ["B", "Csm", "E", "B", "B", "Csm", "E", "B"];
+const HOOK = [   // gepfiffene Melodie: [Frequenz, Länge in Achteln]
+  [[N.Fs5, 2], 0, [N.Ds5, 1], [N.Fs5, 1], [N.Gs5, 2], 0, [N.Fs5, 1], [N.Ds5, 1]],
+  [[N.Cs5, 3], 0, 0, [N.Ds5, 1], [N.Cs5, 2], 0, [N.B4, 2], 0],
+  [[N.Gs4, 1], [N.B4, 1], [N.Cs5, 2], 0, [N.Ds5, 2], 0, [N.Cs5, 1], [N.B4, 1]],
+  [[N.B4, 4], 0, 0, 0, 0, [N.Fs4, 1], [N.Gs4, 1], [N.B4, 1]],
+  [[N.Ds5, 2], 0, [N.Fs5, 2], 0, [N.Gs5, 1], [N.Fs5, 1], [N.Ds5, 2], 0],
+  [[N.Cs5, 2], 0, [N.Gs4, 1], [N.B4, 1], [N.Cs5, 2], 0, [N.Ds5, 2], 0],
+  [[N.Fs5, 2], 0, [N.Ds5, 1], [N.Cs5, 1], [N.B4, 2], 0, [N.Gs4, 2], 0],
+  [[N.B4, 6], 0, 0, 0, 0, 0, 0, 0],
 ];
 let musicOn = store0("music") === "1", mAc = null, mOut = null, mFilter = null, mNext = 0, mStep = 0, mTimer = null, mGate = false;
 function store0(k) { try { return localStorage.getItem("joint." + k); } catch (e) { return null; } }
@@ -493,57 +493,56 @@ function musicTick() {
 function env(g, t, peak, a, d) { g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(peak, t + a); g.gain.exponentialRampToValueAtTime(.0001, t + a + d); }
 function musicStep(step, t) {
   const bar = Math.floor(step / 8) % 8, st = step % 8, ch = SONG[bar], quiet = musicQuiet();
-  const osc = (type, f, t0, t1, peak, a, d, dest, det = 0) => {
-    const o = ac.createOscillator(), g = ac.createGain(); o.type = type; o.frequency.value = f; o.detune.value = det;
-    env(g, t0, peak, a, d); o.connect(g).connect(dest); o.start(t0); o.stop(t1); return o;
-  };
-  // Kick auf 1 und 3, Rimshot auf 3
+  const tt = t + (st % 2 ? STEP * SWING : 0);   // geswungene Achtel
+  // Brust-Klopfen auf 1 und 3: dumpfer Schlag
   if (st === 0 || st === 4) {
     const o = ac.createOscillator(), g = ac.createGain();
-    o.frequency.setValueAtTime(130, t); o.frequency.exponentialRampToValueAtTime(45, t + .14);
-    env(g, t, st === 4 ? 1 : .75, .003, .3); o.connect(g).connect(mOut); o.start(t); o.stop(t + .4);
+    o.frequency.setValueAtTime(110, t); o.frequency.exponentialRampToValueAtTime(58, t + .1);
+    env(g, t, st === 0 ? .85 : .7, .004, .16); o.connect(g).connect(mOut); o.start(t); o.stop(t + .22);
+    if (noiseBuf) { const n = ac.createBufferSource(), lp = ac.createBiquadFilter(), ng = ac.createGain(); n.buffer = noiseBuf; lp.type = "lowpass"; lp.frequency.value = 500; env(ng, t, .25, .002, .05); n.connect(lp).connect(ng).connect(mOut); n.start(t, Math.random()); n.stop(t + .08); }
   }
-  if (st === 4) osc("triangle", 900, t, t + .07, .3, .001, .05, mOut);
-  // Shaker/Hi-Hat: Achtel, Offbeats betont, leicht geshuffelt (nicht im Atem-Modus)
-  if (!quiet && noiseBuf) {
+  // Fingerschnipsen auf 2 und 4 (im Atem-Modus weggelassen, zu hell fürs Mikro)
+  if ((st === 2 || st === 6) && !quiet && noiseBuf) {
     const n = ac.createBufferSource(), bp = ac.createBiquadFilter(), g = ac.createGain();
-    n.buffer = noiseBuf; bp.type = "highpass"; bp.frequency.value = 6500;
-    const tt = t + (st % 2 ? STEP * .14 : 0);
-    env(g, tt, st % 2 ? .16 : .07, .002, .05); n.connect(bp).connect(g).connect(mOut); n.start(tt, Math.random()); n.stop(tt + .08);
+    n.buffer = noiseBuf; bp.type = "bandpass"; bp.frequency.value = 2700; bp.Q.value = 1.6;
+    env(g, t, .9, .001, .045); n.connect(bp).connect(g).connect(mOut); n.start(t, Math.random()); n.stop(t + .07);
+    const c = ac.createOscillator(), cg = ac.createGain(); c.frequency.value = 1900; env(cg, t, .18, .001, .012); c.connect(cg).connect(mOut); c.start(t); c.stop(t + .03);
   }
-  // Skank auf 2 und 4, leiser Nachschlag auf "und" nach der 4
-  if (st === 2 || st === 6 || st === 7) {
-    const lvl = st === 7 ? .045 : .085;
-    for (const f of CH[ch]) for (const det of [-7, 7]) {
-      const o = ac.createOscillator(), bp = ac.createBiquadFilter(), g = ac.createGain();
+  // "Uuh"-Chor: kurze, weiche Akkordtupfer auf den geswungenen Offbeats, Formanten wie ein gesungenes U
+  if (st % 2 === 1) {
+    const lvl = st === 3 || st === 7 ? .045 : .03;
+    for (const f of CH[ch]) for (const det of [-9, 9]) {
+      const o = ac.createOscillator(), f1 = ac.createBiquadFilter(), f2 = ac.createBiquadFilter(), g = ac.createGain();
       o.type = "sawtooth"; o.frequency.value = f; o.detune.value = det;
-      bp.type = "bandpass"; bp.frequency.value = 1600; bp.Q.value = .9;
-      env(g, t, lvl, .003, .1); o.connect(bp).connect(g).connect(mOut); o.start(t); o.stop(t + .18);
+      f1.type = "bandpass"; f1.frequency.value = 330; f1.Q.value = 3;
+      f2.type = "bandpass"; f2.frequency.value = 880; f2.Q.value = 5;
+      g.gain.setValueAtTime(0, tt); g.gain.linearRampToValueAtTime(lvl, tt + .03); g.gain.setTargetAtTime(0, tt + STEP * .55, .06);
+      o.connect(f1); o.connect(f2); f1.connect(g); f2.connect(g); g.connect(mOut); o.start(tt); o.stop(tt + STEP + .3);
     }
   }
-  // Orgel-Bubble
-  if (st === 3 || st === 7) for (const f of CH[ch]) osc("sine", f * 2, t, t + .2, .02, .01, .14, mOut);
-  // hüpfender Bass
+  // gesungener Bass ("dum-dum"): runder Ton mit kleinem Ansatz von unten und Vibrato
   const bf = BASSP[ch][st];
   if (bf) {
-    const o = ac.createOscillator(), o2 = ac.createOscillator(), lp = ac.createBiquadFilter(), g = ac.createGain();
-    o.type = "sine"; o.frequency.value = bf; o2.type = "triangle"; o2.frequency.value = bf;
-    lp.type = "lowpass"; lp.frequency.value = 500;
-    g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(.7, t + .012); g.gain.setTargetAtTime(.45, t + .05, .08); g.gain.setTargetAtTime(0, t + STEP * .8, .035);
-    o.connect(lp); o2.connect(lp); lp.connect(g).connect(mOut);
-    o.start(t); o2.start(t); o.stop(t + STEP + .2); o2.stop(t + STEP + .2);
+    const o = ac.createOscillator(), o2 = ac.createOscillator(), vib = ac.createOscillator(), vg = ac.createGain(), lp = ac.createBiquadFilter(), fm = ac.createBiquadFilter(), g = ac.createGain();
+    o.type = "triangle"; o2.type = "sine";
+    o.frequency.setValueAtTime(bf * .94, tt); o.frequency.exponentialRampToValueAtTime(bf, tt + .05); o2.frequency.setValueAtTime(bf * .94, tt); o2.frequency.exponentialRampToValueAtTime(bf, tt + .05);
+    vib.frequency.value = 5; vg.gain.value = bf * .008; vib.connect(vg); vg.connect(o.frequency); vg.connect(o2.frequency);
+    lp.type = "lowpass"; lp.frequency.value = 700; fm.type = "peaking"; fm.frequency.value = 320; fm.gain.value = 6; fm.Q.value = 1.2;
+    g.gain.setValueAtTime(0, tt); g.gain.linearRampToValueAtTime(.75, tt + .02); g.gain.setTargetAtTime(.5, tt + .06, .08); g.gain.setTargetAtTime(0, tt + STEP * .85, .05);
+    o.connect(lp); o2.connect(lp); lp.connect(fm).connect(g).connect(mOut);
+    const end = tt + STEP + .25; o.start(tt); o2.start(tt); vib.start(tt); o.stop(end); o2.stop(end); vib.stop(end);
   }
-  // gepfiffene Hook: Sinus mit kleinem Hochzieher am Anfang und Vibrato
+  // gepfiffene Melodie
   const h = HOOK[bar][st];
   if (h) {
     const [f, len] = h, dur = STEP * len;
     const o = ac.createOscillator(), o2 = ac.createOscillator(), lfo = ac.createOscillator(), lg = ac.createGain(), g = ac.createGain(), g2 = ac.createGain();
-    o.type = "sine"; o2.type = "sine"; o2.frequency.value = f * 2; g2.gain.value = .08;
-    o.frequency.setValueAtTime(f * .95, t); o.frequency.exponentialRampToValueAtTime(f, t + .05);
-    lfo.frequency.value = 5.8; lg.gain.value = f * .012; lfo.connect(lg).connect(o.frequency);
-    g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(.2, t + .03); g.gain.setTargetAtTime(.15, t + .08, .1); g.gain.setTargetAtTime(0, t + dur * .9, .04);
+    o.type = "sine"; o2.type = "sine"; o2.frequency.value = f * 2; g2.gain.value = .06;
+    o.frequency.setValueAtTime(f * .95, tt); o.frequency.exponentialRampToValueAtTime(f, tt + .05);
+    lfo.frequency.value = 5.6; lg.gain.value = f * .011; lfo.connect(lg).connect(o.frequency);
+    g.gain.setValueAtTime(0, tt); g.gain.linearRampToValueAtTime(.2, tt + .03); g.gain.setTargetAtTime(.15, tt + .08, .1); g.gain.setTargetAtTime(0, tt + dur * .9, .04);
     o.connect(g); o2.connect(g2).connect(g); g.connect(mOut);
-    const end = t + dur + .25; o.start(t); o2.start(t); lfo.start(t); o.stop(end); o2.stop(end); lfo.stop(end);
+    const end = tt + dur + .25; o.start(tt); o2.start(tt); lfo.start(tt); o.stop(end); o2.stop(end); lfo.stop(end);
   }
 }
 function showMusic() { const b = document.getElementById("music"); b.textContent = musicOn ? "♫ Musik: an" : "♫ Musik: aus"; b.setAttribute("aria-pressed", musicOn); }
@@ -1181,16 +1180,18 @@ function renderDive(t) {
 // ---------- Die Welt: Burg Krümelstein, mittelalterliche Mini-Stadt im Inneren der Glut ----------
 // Gezeichnet im Querformat mit "unten" = echter Boden beim Halten (Bildschirmseite gegenüber dem Filter).
 function worldDims() {
-  // Seite läuft hochkant (Drehsperre), Handy wird aber quer gehalten: Welt um 90° drehen, Boden = Seite gegenüber dem Filter
-  if (H > W) return [H, W, orient ? 1 : -1];
-  return [W, H, 0];                              // Seite ist schon quer: normal zeichnen
+  // groß genug, dass sie bei jeder Neigung den ganzen Bildschirm füllt
+  const D = Math.hypot(W, H);
+  return [Math.ceil(D), Math.ceil(D * .7)];
+}
+// Zielwinkel: "unten" der Welt zeigt zum echten Boden (Bewegungssensor); ohne Sensor wie bisher angenommen
+function worldTargetAngle() {
+  if (gScreen && Math.hypot(gScreen[0], gScreen[1]) > 3) return Math.atan2(-gScreen[0], gScreen[1]);
+  return H > W ? (orient ? -Math.PI / 2 : Math.PI / 2) : 0;
 }
 function worldTransform() {
-  const [, , side] = worldDims();
-  if (side === 0) { ctx.setTransform(dpr, 0, 0, dpr, 0, 0); return; }
-  // Boden links: Welt (0,0) liegt oben rechts auf dem Bildschirm, um 90° gedreht
-  if (side < 0) ctx.setTransform(new DOMMatrix([dpr, 0, 0, dpr, 0, 0]).translate(W, 0).rotate(90));
-  else ctx.setTransform(new DOMMatrix([dpr, 0, 0, dpr, 0, 0]).translate(0, H).rotate(-90));
+  const u = world.u;
+  ctx.setTransform(new DOMMatrix([dpr, 0, 0, dpr, 0, 0]).translate(W / 2, H / 2).rotate(world.theta * 180 / Math.PI).translate(-ww / 2, -(world.ground - 70 * u)));
 }
 const ROOF = ["#7c2d12", "#9a3412", "#5a1e0e", "#b4441a", "#6b2a14"];
 const WALLC = ["#f3c487", "#e9a865", "#f0b878", "#dd9455", "#f6d29c"];
@@ -1199,7 +1200,7 @@ const SHOUTS = ["AAAAH!", "DIE GLUT!", "Wer zieht da?!", "Die Mauer brennt!", "R
 function hsh(n) { const x = Math.sin(n * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); }
 function makeWorld() {
   [ww, wh] = worldDims();
-  const u = Math.min(ww, wh) / 300, ground = wh * .8, wallTop = ground - 74 * u;
+  const u = Math.min(W, H) / 300, ground = wh * .8, wallTop = ground - 74 * u;
   // Häuserreihen: hinten klein, vorne groß, dicht an dicht
   const rows = [];
   for (let r = 0; r < 3; r++) {
@@ -1220,7 +1221,7 @@ function makeWorld() {
   for (let i = 0; i < 30; i++) crs.push(newCreature(u, ground, wallTop, true));
   const embers = [];
   for (let i = 0; i < 80; i++) embers.push({ x: Math.random() * ww, y: Math.random() * wh, v: rand(40, 150) * u, r: rand(1, 3.2) * u, ph: Math.random() * 6 });
-  return { u, ground, wallTop, rows, towers, crs, embers, t: 0, saucer: { t: -2, y: wh * .2 }, shake: 0, portal: { x: ww * rand(.7, .85), y: wh * .2 }, gate: ww * rand(.35, .6) };
+  return { u, ground, wallTop, rows, towers, crs, embers, t: 0, theta: worldTargetAngle(), saucer: { t: -2, y: wh * .2 }, shake: 0, portal: { x: ww * rand(.7, .85), y: wh * .2 }, gate: ww * rand(.35, .6) };
 }
 function newCreature(u, ground, wallTop, scatter) {
   const dir = Math.random() < .5 ? -1 : 1, onWall = Math.random() < .35;
@@ -1231,6 +1232,8 @@ function newCreature(u, ground, wallTop, scatter) {
 }
 function updateWorld(dt) {
   const w = world; w.t += dt; w.shake = Math.max(0, w.shake - dt * 2);
+  let d = worldTargetAngle() - w.theta; d = Math.atan2(Math.sin(d), Math.cos(d));
+  w.theta += d * Math.min(1, dt * 7);   // weich dem Haltewinkel folgen
   if (Math.random() < dt * .7) w.shake = .7;
   for (const c of w.crs) {
     if (c.gone > 0) { c.gone += dt; if (c.gone > .45) Object.assign(c, newCreature(w.u, w.ground, w.wallTop, false)); continue; }
@@ -1243,7 +1246,7 @@ function updateWorld(dt) {
     if (c.bub < -rand(1, 4) && w.crs.filter(o => o.bub > 0).length < 4) { c.bub = rand(.8, 1.6); c.txt = SHOUTS[(Math.random() * SHOUTS.length) | 0]; }
     if (!c.wall && Math.abs(c.x - w.gate) < 10 * w.u && Math.random() < dt * 2) c.gone = .001;   // durchs Stadttor geflüchtet
   }
-  for (const e of w.embers) { e.y += e.v * dt; e.x += Math.sin(w.t * 2 + e.ph) * 20 * w.u * dt - 15 * w.u * dt; if (e.y > wh + 10) { e.y = -10; e.x = Math.random() * ww * 1.2; } }
+  for (const e of w.embers) { e.y += e.v * dt; e.x += Math.sin(w.t * 2 + e.ph) * 20 * w.u * dt - 15 * w.u * dt; if (e.y > wh + 10) { e.y = -wh * .3; e.x = Math.random() * ww * 1.2; } }
   w.saucer.t += dt; if (w.saucer.t > 7) { w.saucer.t = -rand(2, 5); w.saucer.y = wh * rand(.1, .25); }
 }
 
@@ -1271,7 +1274,7 @@ function renderWorld(t) {
   // Himmel: Rauch und Glut, in den Farben der Verbrennung
   const sky = ctx.createLinearGradient(0, 0, 0, w.ground);
   sky.addColorStop(0, "#160604"); sky.addColorStop(.35, "#4a1208"); sky.addColorStop(.7, "#b8360c"); sky.addColorStop(1, "#ff8a2a");
-  ctx.fillStyle = sky; ctx.fillRect(-20, -20, ww + 40, wh + 40);
+  ctx.fillStyle = sky; ctx.fillRect(-ww, -wh * 2, ww * 3, w.ground + wh * 2);
   // riesige glühende Tabakfasern am Himmel
   for (let i = 0; i < 3; i++) {
     ctx.save(); ctx.translate(ww * (.15 + i * .35), wh * (.1 + i * .08)); ctx.rotate(-.2 + i * .15);
@@ -1304,7 +1307,7 @@ function renderWorld(t) {
   // Stadtmauer mit Zinnen, Toren und Türmen
   drawWall(w, u, t);
   // Boden vor der Mauer
-  ctx.beginPath(); ctx.moveTo(-20, w.ground); for (let x = -20; x <= ww + 20; x += 20 * u) ctx.lineTo(x, w.ground + Math.sin(x * .03) * 3 * u + jit(x, 1.5 * u)); ctx.lineTo(ww + 20, wh + 20); ctx.lineTo(-20, wh + 20); ctx.closePath();
+  ctx.beginPath(); ctx.moveTo(-ww, w.ground); for (let x = -ww; x <= ww * 2; x += 20 * u) ctx.lineTo(x, w.ground + Math.sin(x * .03) * 3 * u + jit(x, 1.5 * u)); ctx.lineTo(ww * 2, wh * 2); ctx.lineTo(-ww, wh * 2); ctx.closePath();
   inked("#2a120a", 3 * u);
   ctx.strokeStyle = "rgba(255,120,40,.35)"; ctx.lineWidth = 2 * u;
   for (let i = 0; i < 22; i++) { const x = hsh(i) * ww, y = w.ground + 12 * u + hsh(i + 9) * (wh - w.ground - 16 * u); ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + 12 * u, y + 3 * u); ctx.lineTo(x + 20 * u, y + 1 * u); ctx.stroke(); }
@@ -1314,12 +1317,22 @@ function renderWorld(t) {
   ctx.save(); ctx.globalCompositeOperation = "lighter";
   for (const e of w.embers) { const g = ctx.createRadialGradient(e.x, e.y, 0, e.x, e.y, e.r * 3); g.addColorStop(0, "rgba(255,220,120,.95)"); g.addColorStop(1, "rgba(255,80,0,0)"); ctx.fillStyle = g; ctx.fillRect(e.x - e.r * 3, e.y - e.r * 3, e.r * 6, e.r * 6); }
   ctx.restore();
-  const vg = ctx.createRadialGradient(ww / 2, wh / 2, Math.min(ww, wh) * .3, ww / 2, wh / 2, Math.max(ww, wh) * .75);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const vg = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * .3, W / 2, H / 2, Math.max(W, H) * .75);
   vg.addColorStop(0, "rgba(255,80,0,0)"); vg.addColorStop(1, `rgba(90,8,0,${.5 + .1 * Math.sin(t * 5)})`);
-  ctx.fillStyle = vg; ctx.fillRect(-20, -20, ww + 40, wh + 40);
+  ctx.fillStyle = vg; ctx.fillRect(0, 0, W, H);
+  // Bauchbinde: mitgedreht, in der Ecke, die gerade oben links ist
+  const c = Math.abs(Math.cos(w.theta)), sn = Math.abs(Math.sin(w.theta)), vw = c >= sn ? W : H, vh = c >= sn ? H : W;
+  ctx.translate(W / 2, H / 2); ctx.rotate(w.theta);
   ctx.font = `${Math.round(15 * u)}px Bangers, Impact, sans-serif`; ctx.textBaseline = "top";
   const cap = "LIVE AUS DER GLUT · BURG KRÜMELSTEIN · 0,3 MM";
-  ctx.lineWidth = 4 * u; ctx.strokeStyle = "#1a0d08"; ctx.strokeText(cap, 16, 14); ctx.fillStyle = "#ffd36a"; ctx.fillText(cap, 16, 14);
+  let cx = -vw / 2 + 16, cy = -vh / 2 + 14;
+  if (Math.min(c, sn) > .3) {   // schräg gehalten: mittig oben, damit sie nicht aus dem Bild ragt
+    const m = Math.min(W, H) * .42, tw = ctx.measureText(cap).width;
+    if (tw > m * 2) ctx.font = `${Math.round(15 * u * m * 2 / tw)}px Bangers, Impact, sans-serif`;
+    cx = -Math.min(tw, m * 2) / 2; cy = -m;
+  }
+  ctx.lineWidth = 4 * u; ctx.strokeStyle = "#1a0d08"; ctx.strokeText(cap, cx, cy); ctx.fillStyle = "#ffd36a"; ctx.fillText(cap, cx, cy);
 }
 function drawCastle(cx, base, u, t) {
   ctx.save(); ctx.translate(cx, base);
@@ -1376,18 +1389,18 @@ function drawHouse(hs, u, t) {
 function drawWall(w, u, t) {
   const top = w.wallTop, bot = w.ground;
   // Mauerband
-  ctx.beginPath(); ctx.rect(-20, top, ww + 40, bot - top); inked("#9a5a34", 3 * u);
+  ctx.beginPath(); ctx.rect(-ww, top, ww * 3, bot - top); inked("#9a5a34", 3 * u);
   // Steinfugen
   ctx.strokeStyle = "rgba(40,16,6,.55)"; ctx.lineWidth = 1.4 * u;
   for (let y = top + 12 * u, r = 0; y < bot; y += 12 * u, r++) {
-    ctx.beginPath(); ctx.moveTo(-20, y); ctx.lineTo(ww + 20, y); ctx.stroke();
-    for (let x = (r % 2) * 11 * u; x < ww; x += 22 * u) { ctx.beginPath(); ctx.moveTo(x + jit(x + y, 1.2 * u), y - 12 * u); ctx.lineTo(x, y); ctx.stroke(); }
+    ctx.beginPath(); ctx.moveTo(-ww, y); ctx.lineTo(ww * 2, y); ctx.stroke();
+    for (let x = (r % 2) * 11 * u - ww * .3; x < ww * 1.3; x += 22 * u) { ctx.beginPath(); ctx.moveTo(x + jit(x + y, 1.2 * u), y - 12 * u); ctx.lineTo(x, y); ctx.stroke(); }
   }
   // Feuerschein auf der Mauer
   const lg = ctx.createLinearGradient(0, top, 0, bot); lg.addColorStop(0, `rgba(255,150,40,${.35 + .1 * Math.sin(t * 6)})`); lg.addColorStop(1, "rgba(60,10,0,.35)");
-  ctx.fillStyle = lg; ctx.fillRect(-20, top, ww + 40, bot - top);
+  ctx.fillStyle = lg; ctx.fillRect(-ww, top, ww * 3, bot - top);
   // Zinnen
-  for (let x = -10 * u; x < ww + 20; x += 20 * u) { ctx.beginPath(); ctx.rect(x, top - 11 * u, 11 * u, 12 * u); inked("#a8653c", 2.4 * u); }
+  for (let x = -ww * .3; x < ww * 1.3; x += 20 * u) { ctx.beginPath(); ctx.rect(x, top - 11 * u, 11 * u, 12 * u); inked("#a8653c", 2.4 * u); }
   // Stadttor
   ctx.beginPath(); ctx.moveTo(w.gate - 18 * u, bot); ctx.lineTo(w.gate - 18 * u, bot - 30 * u); ctx.quadraticCurveTo(w.gate, bot - 48 * u, w.gate + 18 * u, bot - 30 * u); ctx.lineTo(w.gate + 18 * u, bot); inked("#1f0b05", 3 * u);
   ctx.strokeStyle = "#5a2a14"; ctx.lineWidth = 2 * u; for (let k = -1; k <= 1; k++) { ctx.beginPath(); ctx.moveTo(w.gate + k * 9 * u, bot); ctx.lineTo(w.gate + k * 9 * u, bot - 36 * u); ctx.stroke(); }
@@ -1472,54 +1485,67 @@ function whoosh(inward) {
   g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(.5, t + d * .8); g.gain.exponentialRampToValueAtTime(.001, t + d + .15);
   n.connect(bp).connect(g).connect(ac.destination); n.start(t); n.stop(t + d + .2);
 }
-function scream(t0, loud) {
+function scream(t0, loud, dest) {
   // ein kleines, panisches "Aaaah": quiekig, mit Zittern, Tonhöhe kippt nach unten
-  const f = rand(700, 2000), dur = rand(.3, .8);
+  const f = rand(650, 2000), dur = rand(.35, 1);
   const o = ac.createOscillator(), o2 = ac.createOscillator(), vib = ac.createOscillator(), vg = ac.createGain(), bp = ac.createBiquadFilter(), bp2 = ac.createBiquadFilter(), sg = ac.createGain();
   o.type = "sawtooth"; o2.type = "square"; o2.detune.value = rand(-30, 30);
-  o.frequency.setValueAtTime(f * rand(.9, 1.2), t0); o.frequency.linearRampToValueAtTime(f, t0 + .06); o.frequency.exponentialRampToValueAtTime(f * rand(.45, .75), t0 + dur);
+  o.frequency.setValueAtTime(f * rand(.9, 1.25), t0); o.frequency.linearRampToValueAtTime(f, t0 + .06); o.frequency.exponentialRampToValueAtTime(f * rand(.45, .75), t0 + dur);
   o2.frequency.setValueAtTime(f, t0); o2.frequency.exponentialRampToValueAtTime(f * rand(.45, .75), t0 + dur);
-  vib.frequency.value = rand(12, 28); vg.gain.value = f * rand(.03, .08); vib.connect(vg); vg.connect(o.frequency); vg.connect(o2.frequency);
-  bp.type = "bandpass"; bp.frequency.value = f * 1.3; bp.Q.value = 2.5;            // Mund-Formant
+  vib.frequency.value = rand(12, 28); vg.gain.value = f * rand(.03, .09); vib.connect(vg); vg.connect(o.frequency); vg.connect(o2.frequency);
+  bp.type = "bandpass"; bp.frequency.value = f * 1.3; bp.Q.value = 2.5;
   bp2.type = "bandpass"; bp2.frequency.value = 2600; bp2.Q.value = 1.5;
   sg.gain.setValueAtTime(0, t0); sg.gain.linearRampToValueAtTime(loud, t0 + .03); sg.gain.setTargetAtTime(loud * .7, t0 + .1, .1); sg.gain.exponentialRampToValueAtTime(.001, t0 + dur);
-  o.connect(bp); o2.connect(bp2); bp.connect(sg); bp2.connect(sg); sg.connect(wAudio.bus);
+  o.connect(bp); o2.connect(bp2); bp.connect(sg); bp2.connect(sg); sg.connect(dest);
   [o, o2, vib].forEach(n => { n.start(t0); n.stop(t0 + dur + .05); });
 }
 function worldAudio(on) {
   if (!ac || !noiseBuf) return;
   if (on) {
     if (wAudio) return;
-    const t = ac.currentTime;
-    const bus = ac.createGain(); bus.gain.setValueAtTime(0, t); bus.gain.linearRampToValueAtTime(1, t + .25); bus.connect(ac.destination);
-    // Lodern: tiefes Brausen + Fauchen
-    const n = ac.createBufferSource(), lp = ac.createBiquadFilter(), g = ac.createGain();
-    n.buffer = noiseBuf; n.loop = true; lp.type = "lowpass"; lp.frequency.value = 420; g.gain.value = .9;
-    const lfo = ac.createOscillator(), lg = ac.createGain(); lfo.frequency.value = .7; lg.gain.value = .35; lfo.connect(lg).connect(g.gain); lfo.start(t);
-    n.connect(lp).connect(g).connect(bus); n.start(t, Math.random());
-    const n2 = ac.createBufferSource(), bp = ac.createBiquadFilter(), g2 = ac.createGain();
-    n2.buffer = noiseBuf; n2.loop = true; bp.type = "bandpass"; bp.frequency.value = 1100; bp.Q.value = .6; g2.gain.value = .22;
-    n2.connect(bp).connect(g2).connect(bus); n2.start(t, Math.random());
-    wAudio = { bus, n, n2, lfo, id: 0 };
-    // Knacken und Prasseln der Balken
+    const t = ac.currentTime, nodes = [];
+    // Summe verdichten, damit es laut "tost", ohne zu übersteuern
+    const comp = ac.createDynamicsCompressor(); comp.threshold.value = -18; comp.ratio.value = 5; comp.attack.value = .005; comp.release.value = .2;
+    const clip = ac.createWaveShaper(), cc = new Float32Array(1024);   // weicher Begrenzer gegen Übersteuern
+    for (let i = 0; i < 1024; i++) { const x = i / 511.5 - 1; cc[i] = Math.tanh(1.8 * x) / Math.tanh(1.8) * .95; }
+    clip.curve = cc;
+    const bus = ac.createGain(); bus.gain.setValueAtTime(0, t); bus.gain.linearRampToValueAtTime(1.4, t + .25); bus.connect(comp).connect(clip).connect(ac.destination);
+    const loop = (fType, f, q, gain) => { const n = ac.createBufferSource(), fl = ac.createBiquadFilter(), g = ac.createGain(); n.buffer = noiseBuf; n.loop = true; fl.type = fType; fl.frequency.value = f; fl.Q.value = q; g.gain.value = gain; n.connect(fl).connect(g).connect(bus); n.start(t, Math.random()); nodes.push(n); return g; };
+    // lodernde Flammen: tiefes Brausen (wogend), Fauchen, Zischen
+    const roar = loop("lowpass", 360, .7, 1.1);
+    const lfo = ac.createOscillator(), lg = ac.createGain(); lfo.frequency.value = .6; lg.gain.value = .45; lfo.connect(lg).connect(roar.gain); lfo.start(t); nodes.push(lfo);
+    loop("bandpass", 900, .6, .35); loop("highpass", 5000, .5, .05);
+    // tosende Menge: viele gehaltene, zitternde "Aaah"-Stimmen, die auf- und abschwellen
+    for (let i = 0; i < 9; i++) {
+      const f = rand(520, 1250), o = ac.createOscillator(), vib = ac.createOscillator(), vg = ac.createGain(), wob = ac.createOscillator(), wg = ac.createGain();
+      const f1 = ac.createBiquadFilter(), f2 = ac.createBiquadFilter(), g = ac.createGain(), am = ac.createOscillator(), amg = ac.createGain();
+      o.type = "sawtooth"; o.frequency.value = f;
+      vib.frequency.value = rand(6, 11); vg.gain.value = f * .03; vib.connect(vg).connect(o.frequency);
+      wob.frequency.value = rand(.15, .45); wg.gain.value = f * .12; wob.connect(wg).connect(o.frequency);
+      f1.type = "bandpass"; f1.frequency.value = f * 1.25; f1.Q.value = 3; f2.type = "bandpass"; f2.frequency.value = 2400; f2.Q.value = 2;
+      g.gain.value = .028; am.frequency.value = rand(1.5, 4); amg.gain.value = .02; am.connect(amg).connect(g.gain);
+      o.connect(f1); o.connect(f2); f1.connect(g); f2.connect(g); g.connect(bus);
+      [o, vib, wob, am].forEach(n => { n.start(t + Math.random() * .2); nodes.push(n); });
+    }
+    loop("bandpass", 2200, 1.2, .1);   // Gewirr vieler Stimmen
+    wAudio = { bus, nodes, id: 0 };
     const crack = () => {
-      if (!wAudio) return;
-      const t0 = ac.currentTime + Math.random() * .1, s = ac.createBufferSource(), hp = ac.createBiquadFilter(), cg = ac.createGain();
-      s.buffer = noiseBuf; hp.type = "highpass"; hp.frequency.value = rand(800, 3000);
-      cg.gain.setValueAtTime(rand(.2, .6), t0); cg.gain.exponentialRampToValueAtTime(.001, t0 + rand(.03, .12));
-      s.connect(hp).connect(cg).connect(wAudio.bus); s.start(t0, Math.random() * 1.5); s.stop(t0 + .15);
+      const t0 = ac.currentTime + Math.random() * .1, sN = ac.createBufferSource(), hp = ac.createBiquadFilter(), cg = ac.createGain();
+      sN.buffer = noiseBuf; hp.type = "highpass"; hp.frequency.value = rand(700, 3000);
+      cg.gain.setValueAtTime(rand(.25, .7), t0); cg.gain.exponentialRampToValueAtTime(.001, t0 + rand(.03, .14));
+      sN.connect(hp).connect(cg).connect(bus); sN.start(t0, Math.random() * 1.5); sN.stop(t0 + .16);
     };
-    // Geschrei: dicht, mehrstimmig, unregelmäßig
+    // dazu einzelne, laute Schreie obendrauf
     wAudio.id = setInterval(() => {
       if (!wAudio || ac.state !== "running") return;
       const now = ac.currentTime, voices = 1 + (Math.random() * 3 | 0);
-      for (let k = 0; k < voices; k++) scream(now + Math.random() * .18, rand(.06, .14));
-      if (Math.random() < .7) crack(); if (Math.random() < .4) crack();
-    }, 170);
+      for (let k = 0; k < voices; k++) scream(now + Math.random() * .15, rand(.08, .18), bus);
+      if (Math.random() < .8) crack(); if (Math.random() < .5) crack();
+    }, 140);
   } else if (wAudio) {
     const a = wAudio; wAudio = null; clearInterval(a.id);
     const t = ac.currentTime; a.bus.gain.cancelScheduledValues(t); a.bus.gain.setValueAtTime(a.bus.gain.value, t); a.bus.gain.linearRampToValueAtTime(0, t + .12);
-    a.n.stop(t + .2); a.n2.stop(t + .2); a.lfo.stop(t + .2);
+    a.nodes.forEach(n => { try { n.stop(t + .2); } catch (e) {} });
   }
 }
 
@@ -1558,15 +1584,16 @@ cv.addEventListener("contextmenu", e => e.preventDefault());
 
 document.getElementById("light").onclick = async () => {
   ensureAudio();
-  const motionP = prefKnock ? requestMotion() : Promise.resolve(false);
+  const motionP = requestMotion();   // auch ohne Klopfen: für die Neigung der Glutwelt
   if (prefMode === "breath") {
     status("Mikrofon wird angefragt …");
     if (!await startMic()) { status("Kein Mikrofon-Zugriff. Erlaube das Mikrofon für diese Seite (in der Claude-Vorschau geht es nicht) oder wähle Finger."); return; }
   }
-  if (prefKnock) {
-    if (!await motionP) { stopMic(); status("Kein Zugriff auf den Bewegungssensor. Erlaube „Bewegung & Ausrichtung“ oder schalte Klopfen aus."); return; }
+  const motionOk = await motionP;
+  if (prefKnock && !motionOk) { stopMic(); status("Kein Zugriff auf den Bewegungssensor. Erlaube „Bewegung & Ausrichtung“ oder schalte Klopfen aus."); return; }
+  if (motionOk) {
     lastAcc = null; gAvg = null; gHold = null; holdAcc = []; motionHist = []; lastOverhead = -1e9; knockThr = 6 - $("knockSens").value * .052;   // 0.8 … 6 m/s² Sprung zwischen zwei Messungen
-    addEventListener("devicemotion", onMotion);
+    removeEventListener("devicemotion", onMotion); addEventListener("devicemotion", onMotion);
   }
   micSens = +$("micSens").value;
   mode = prefMode; knock = prefKnock; status(""); mStep = 0;
@@ -1724,10 +1751,20 @@ function breathStep(dt) {
 // Klopfen auf den Rahmen = Ruck im Beschleunigungssensor; Empfindlichkeit wird beim Anzünden festgelegt
 let lastAcc = null, lastKnock = 0, knockThr = 3;
 let gAvg = null, gHold = null, holdAcc = [], motionHist = [], lastOverhead = -1e9;
+let gScreen = null;
+const gSign = /Android/i.test(navigator.userAgent) ? -1 : 1;   // iOS meldet die Schwerkraftrichtung, Android die Gegenrichtung
 function onMotion(e) {
   const a = e.accelerationIncludingGravity || e.acceleration;
   if (!a || a.x === null) return;
   const v = [a.x, a.y, a.z];
+  {
+    // Schwerkraft in Bildschirmkoordinaten (Geräte-y zeigt nach oben, Bildschirm-y nach unten; Drehung der Seite berücksichtigen)
+    const ang = ((screen.orientation && screen.orientation.angle) || window.orientation || 0) * Math.PI / 180;
+    const px = gSign * a.x, py = -gSign * a.y, c = Math.cos(-ang), sn = Math.sin(-ang);
+    const g = [px * c - py * sn, px * sn + py * c];
+    gScreen = gScreen ? [gScreen[0] + (g[0] - gScreen[0]) * .2, gScreen[1] + (g[1] - gScreen[1]) * .2] : g;
+  }
+  if (!knock) return;   // Abklopfen/Ausdrücken nur, wenn im Startmenü eingeschaltet
   {
     const now = performance.now();
     gAvg = gAvg ? gAvg.map((g, i) => g + (v[i] - g) * .15) : v.slice();
