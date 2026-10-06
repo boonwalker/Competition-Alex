@@ -101,6 +101,7 @@ let bodyPad = 8, W, H, dpr, L, S, r0, r1, x0, fullLen, filterLen, burnStart, bur
 let body, ashTex, smokeSprites = [], frameM, frameInv, smokeLayer = null, sctx = null;
 let orient = 0;           // 0: Filter unten rechts, 1: Filter unten links
 let UX = 0, UY = -1;      // "oben" auf dem Bildschirm, im Joint-Koordinatensystem
+let GX = 0, GY = 1;       // echter Boden beim Halten: zur Bildschirmseite gegenüber dem Filter (Filter rechts -> Boden links)
 let state = "unlit";      // unlit | lighting | lit | out
 let bx, ashStart, heat = 0, drawing = false, drawStart = 0, drawTime = 0, totalDrags = 0, haze = 0, lightT = 0;
 let ashLimit = 3, smoke = [], sparks = [], ashFall = [], emberDots = [];
@@ -143,6 +144,8 @@ function buildFrame() {
   frameInv = frameM.inverse();
   const a = frameInv.transformPoint(new DOMPoint(W / 2, H / 2)), b = frameInv.transformPoint(new DOMPoint(W / 2, H / 2 - 1));
   UX = b.x - a.x; UY = b.y - a.y;
+  const g = frameInv.transformPoint(new DOMPoint(W / 2 + (orient ? 1 : -1), H / 2));
+  GX = g.x - a.x; GY = g.y - a.y;
 }
 
 // ---------- Papier, Füllung, Crutch (einmal vorgerendert) ----------
@@ -783,9 +786,9 @@ function update(dt, t) {
     p.x += p.vx * dt - UY * wob; p.y += p.vy * dt + UX * wob; p.rot += p.vr * dt;
   }
   smoke = smoke.filter(p => p.life < p.max);
-  for (const s of sparks) { s.life += dt; const g = s.g ?? 140; s.vx -= UX * g * dt; s.vy -= UY * g * dt; s.x += s.vx * dt; s.y += s.vy * dt; }
+  for (const s of sparks) { s.life += dt; const g = s.g ?? 140; s.vx += GX * g * dt; s.vy += GY * g * dt; s.x += s.vx * dt; s.y += s.vy * dt; }
   sparks = sparks.filter(s => s.life < s.max);
-  for (const p of ashFall) { p.life += dt; p.vx -= UX * 900 * dt; p.vy -= UY * 900 * dt; p.y += p.vy * dt; p.x += p.vx * dt; p.rot += p.vr * dt; }
+  for (const p of ashFall) { p.life += dt; p.vx += GX * 900 * dt; p.vy += GY * 900 * dt; p.y += p.vy * dt; p.x += p.vx * dt; p.rot += p.vr * dt; }
   ashFall = ashFall.filter(p => p.life < 1.6);
 }
 
@@ -798,7 +801,7 @@ function flick(byHand) {
   }
   const R = radius(bx), keep = byHand ? 0 : len * rand(0, .3);
   const w = len - keep;
-  ashFall.push({ x: bx + keep + w / 2, y: 0, w, h: R * 1.9, vx: -UX * (byHand ? 60 : 0) + rand(-20, 20), vy: -UY * (byHand ? 60 : 0), rot: 0, vr: rand(-2, 2), life: 0 });
+  ashFall.push({ x: bx + keep + w / 2, y: 0, w, h: R * 1.9, vx: GX * (byHand ? 60 : 0) + rand(-20, 20), vy: GY * (byHand ? 60 : 0), rot: 0, vr: rand(-2, 2), life: 0 });
   for (let i = 0; i < 16; i++) sparks.push({ x: bx + keep + rand(0, w), y: rand(-R, R) * .7, vx: rand(-40, 40), vy: rand(-30, 40), r: rand(.4, 1.2), life: 0, max: rand(.2, .6) });
   ashStart = bx + keep; ashLimit = rand(2.2, 4);
   buildEmberDots();
@@ -807,7 +810,7 @@ function flick(byHand) {
 function sparkPuff() {
   const R = radius(bx), tip = Math.max(bx, ashStart);
   const n = 12 + Math.floor(Math.random() * 10);
-  const DX = -UX, DY = -UY;                       // "unten" auf dem Bildschirm, im Joint-Koordinatensystem
+  const DX = GX, DY = GY;                         // Richtung Boden (beim Halten links), im Joint-Koordinatensystem
   for (let i = 0; i < n; i++) {
     const f = rand(-.8, .8), sp = rand(150, 380), out = rand(0, 90), sc = rand(-70, 70);
     sparks.push({ x: rand(bx, tip) + R * .15, y: f * R, vx: DX * sp + out - DY * sc, vy: DY * sp + DX * sc, r: rand(1, 2.2), life: 0, max: rand(.35, .9), g: 600 });
