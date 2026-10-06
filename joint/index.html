@@ -657,19 +657,38 @@ function drawJointPart(t, R, lit) {
 
 // Verbiegen beim Ausdrücken: der Stummel knickt je nach Restlänge in 1–3 Bögen ein und schlängelt kurz nach
 const bendOn = () => state === "stub" || (state === "out" && smears.length > 0);
+// Knickstellen werden beim Ausdrücken zufällig verteilt: unterschiedlich stark, breit und schief
+let stubKinks = [];
+function makeKinks() {
+  const ratio = clamp((bx - x0 - filterLen) / (fullLen - filterLen), 0, 1);
+  const n = 1 + Math.round(ratio * 3 + Math.random() * .8);
+  stubKinks = [];
+  let side = Math.random() < .5 ? -1 : 1;
+  for (let i = 0; i < n; i++) {
+    stubKinks.push({ p: (i + rand(.25, .85)) / n, a: rand(.45, 1.2) * side, w: rand(.075, .17), sk: rand(-.5, .5), sharp: rand(1.3, 1.85) });
+    side = Math.random() < .75 ? -side : side;   // meist abwechselnd, manchmal zweimal zur selben Seite
+  }
+}
+function kinkRaw(s) {
+  let y = 0;
+  for (const k of stubKinks) {
+    const d = s - k.p, w = k.w * (d < 0 ? 1 + k.sk : 1 - k.sk);
+    y += k.a * Math.exp(-Math.pow(Math.abs(d) / w, k.sharp));
+  }
+  return y;
+}
 function bendY(x) {
   if (!bendOn()) return 0;
   const xs = x0 + filterLen;   // der Crutch aus Karton bleibt gerade
   const len = Math.max(1, bx - xs), ratio = clamp((stubFrom - xs) / (fullLen - filterLen), 0, 1);
-  const n = ratio > .62 ? 3 : ratio > .34 ? 2 : 1;
   const k = state === "stub" ? easeOut(stubT / .6) : 1;
   const sNow = (x - xs) / len;
   if (sNow > 1) return bendY(bx) + (bendY(bx) - bendY(bx - 2)) / 2 * (x - bx);   // dahinter geradlinig weiter
   const s = Math.max(0, sNow);
-  const A = r1 * (.3 + 1.35 * ratio) * k * stubSide;
-  const w = Math.sin(Math.PI * n * s);
-  let y = A * Math.tanh(1.8 * w) / Math.tanh(1.8) * Math.pow(s, .25);   // Papier knickt eher, als dass es sich rund biegt
-  if (state === "stub") y += r1 * (.2 + .45 * ratio) * Math.sin(6.283 * (s * 1.4 - stubT * 2.2)) * Math.exp(-stubT * 1.4) * s * (1 - s) * 4;   // Nachschlängeln
+  // Enden bleiben auf der Achse, dazwischen sitzen die Knicke
+  const raw = kinkRaw(s) - (1 - s) * kinkRaw(0) - s * kinkRaw(1);
+  let y = r1 * (.55 + 1.1 * ratio) * k * raw;
+  if (state === "stub") y += r1 * (.15 + .35 * ratio) * Math.sin(6.283 * (s * 1.7 - stubT * 2.6) + stubKinks.length) * Math.exp(-stubT * 1.6) * s * (1 - s) * 4;   // Nachzittern
   return y;
 }
 let bendLayer = null, bendCtx = null;
@@ -682,12 +701,22 @@ function drawJointBent(t, R, lit) {
   bendCtx.setTransform(dpr, 0, 0, dpr, -lx * dpr, -ly * dpr);
   ctx = bendCtx; drawJointPart(t, R, lit); ctx = mainCtx;
   // in schmalen Scheiben entlang der gebogenen Mittellinie wieder auflegen
-  const step = 2, ov = 2.5;
+  const step = 2, ov = 5, base0 = new DOMMatrix([dpr, 0, 0, dpr, 0, 0]).multiply(frameM);
   ctx.save(); ctx.imageSmoothingEnabled = true;
+  let prevTh = null; const creases = [];
   for (let x = lx; x < lx + lw; x += step) {
-    const y = bendY(x), th = Math.atan2(bendY(x + 1) - bendY(x - 1), 2);
-    ctx.setTransform(new DOMMatrix([dpr, 0, 0, dpr, 0, 0]).multiply(frameM).translate(x, y).rotate(th * 180 / Math.PI));
+    const y = bendY(x), th = Math.atan2(bendY(x + 1.5) - bendY(x - 1.5), 3);
+    ctx.setTransform(base0.translate(x, y).rotate(th * 180 / Math.PI));
     ctx.drawImage(bendLayer, Math.max(0, (x - lx - ov / 2) * dpr), 0, (step + ov) * dpr, lh * dpr, -ov / 2, ly, step + ov, lh);
+    if (prevTh !== null && x > x0 + filterLen && x < bx) { const cv2 = Math.abs(th - prevTh) / step; if (cv2 > .012) creases.push([x, y, th, Math.min(.4, (cv2 - .012) * 18)]); }
+    prevTh = th;
+  }
+  // Knickfalten: an starken Biegungen dunkle Kerbe mit heller Kante im Papier
+  for (const [x, y, th, a] of creases) {
+    const r = radius(x) * .95;
+    ctx.setTransform(base0.translate(x, y).rotate(th * 180 / Math.PI));
+    ctx.fillStyle = `rgba(30,20,10,${a * .5})`; ctx.fillRect(-.8, -r, 1.6, r * 2);
+    ctx.fillStyle = `rgba(255,250,235,${a * .25})`; ctx.fillRect(.8, -r, 1, r * 2);
   }
   ctx.restore();
 }
@@ -812,7 +841,7 @@ function update(dt, t) {
   diveUpdate(dt);
   if (state === "lit") {
     if (mode === "breath") breathStep(dt);
-    const hTarget = !drawing ? 0 : mode === "breath" ? .6 + micInt * .5 : (bx - fingerX > 2 ? 1.1 : .75);
+    const hTarget = dive.session && !drawing ? .85 : !drawing ? 0 : mode === "breath" ? .6 + micInt * .5 : (bx - fingerX > 2 ? 1.1 : .75);
     heat += (hTarget - heat) * dt * (drawing ? 3 : 1.3);
     const span = burnStart - burnEnd;
     bx -= span * dt * 0.0018;                       // glimmt von selbst ganz langsam
@@ -845,7 +874,7 @@ function update(dt, t) {
   haze = Math.max(0, haze - dt * .008);
   if (state === "lit") diveCheck();
   // Stop-and-go: Musik nur, solange wirklich gezogen wird (Finger in Bewegung bzw. Ziehgeräusch)
-  musicGate(musicOn && state === "lit" && drawing && (mode === "breath" || performance.now() - lastBurnT < 200));
+  musicGate(musicOn && state === "lit" && (dive.session || (drawing && (mode === "breath" || performance.now() - lastBurnT < 200))));
 
   // Ausatmen
   if (exhaleT >= 0) {
@@ -955,7 +984,9 @@ function sparkPuff(power = 1) {
 let stubT = 0, stubFrom = 0, stubSide = 1, smears = [], stubDone = false;
 function stubOut() {
   if (state !== "lit") return;
-  state = "stub"; stubT = 0; stubFrom = bx; stubSide = Math.random() < .5 ? -1 : 1; stubDone = false;
+  state = "stub"; stubT = 0; stubFrom = bx; stubSide = Math.random() < .5 ? -1 : 1; stubDone = false; makeKinks();
+  if (dive.phase !== "none") { dive.phase = "none"; worldAudio(false); }
+  dive.session = false;
   drawing = false; pid = null; breathState = "idle"; setCue(""); musicGate(false);
   if (exhaleSrc === "mic") exhaleT = -1;
   const R = radius(bx), ashLen = Math.max(R * .6, ashStart - bx);
@@ -1064,43 +1095,50 @@ function finish(msg, title) {
 }
 
 // ---------- Glutwelt: Kameraflug in die Glut und die brennende Mini-Stadt ----------
-// Auslöser: während gezogen wird, irgendwo auf dem Bildschirm gedrückt halten (Finger-Modus: mit einem zweiten Finger).
-// Solange gehalten wird, bleibt man in der Glutwelt; loslassen fliegt wieder heraus.
+// Einstieg: während gezogen wird, irgendwo gedrückt halten (Finger-Modus: zweiter Finger).
+// Danach läuft eine "Glutwelt-Sitzung": Finger auflegen = Stadt, loslassen = Joint (mit Musik).
+// Die Sitzung endet, wenn man ein paar Sekunden beim Joint bleibt, ohne zu ziehen.
 const holds = new Map();               // pointerId -> { t0, x, y, moved }
-const dive = { phase: "none", t: 0, ox: 0, oy: 0 };
-let world = null, diveTmp = null;
-const DIVE_IN = 1.1, DIVE_OUT = .75, HOLD_MS = 600;
+const dive = { phase: "none", t: 0, ox: 0, oy: 0, session: false, fast: false, jointSince: 0 };
+let world = null, diveTmp = null, ww = 0, wh = 0;
+const HOLD_MS = 600;
+const dIn = () => dive.fast ? .45 : 1.1, dOut = () => dive.fast ? .35 : .75;
 
 cv.addEventListener("pointerdown", e => { holds.set(e.pointerId, { t0: performance.now(), x: e.clientX, y: e.clientY, moved: false }); });
 addEventListener("pointermove", e => { const h = holds.get(e.pointerId); if (h && Math.hypot(e.clientX - h.x, e.clientY - h.y) > 24) h.moved = true; });
 addEventListener("pointerup", e => holds.delete(e.pointerId));
 addEventListener("pointercancel", e => holds.delete(e.pointerId));
 
+const otherHolds = () => [...holds.entries()].filter(([id]) => !(mode === "finger" && id === pid));
 function diveCheck() {
-  if (state !== "lit" || !drawing || dive.phase !== "none") return;
+  if (state !== "lit" || dive.phase !== "none") return;
   const now = performance.now();
-  for (const [id, h] of holds) {
-    if (mode === "finger" && id === pid) continue;   // der ziehende Finger zählt nicht
-    if (!h.moved && now - h.t0 > HOLD_MS) { startDive(); return; }
+  if (dive.session) {
+    // in der Sitzung: Finger auflegen bringt einen sofort wieder in die Stadt
+    if (otherHolds().some(([, h]) => now - h.t0 > 90)) { startDive(true); return; }
+    if (now - dive.jointSince > 3500 && !drawing) dive.session = false;
+    return;
   }
+  if (!drawing) return;
+  if (otherHolds().some(([, h]) => !h.moved && now - h.t0 > HOLD_MS)) startDive(false);
 }
-function startDive() {
+function startDive(fast) {
   const q = frameM.transformPoint(new DOMPoint(bx + radius(bx) * .15, 0));
-  dive.phase = "in"; dive.t = 0; dive.ox = q.x; dive.oy = q.y;
+  dive.phase = "in"; dive.t = 0; dive.ox = q.x; dive.oy = q.y; dive.fast = fast; dive.session = true;
   state = "dive"; heat = 1.4; musicGate(false);
   if (ac) { crackleGain.gain.setTargetAtTime(0, ac.currentTime, .05); hissGain.gain.setTargetAtTime(0, ac.currentTime, .05); }
   whoosh(true);
+  worldAudio(true);   // Inferno-Ton beginnt schon im Flug
 }
 function diveUpdate(dt) {
   if (dive.phase === "none") return;
   dive.t += dt;
-  if (dive.phase === "in" && dive.t >= DIVE_IN) { dive.phase = "world"; dive.t = 0; world = makeWorld(); worldAudio(true); }
+  if (dive.phase === "in" && dive.t >= dIn()) { dive.phase = "world"; dive.t = 0; if (!world || ww !== worldDims()[0]) world = makeWorld(); }
   else if (dive.phase === "world") {
     updateWorld(dt);
-    const holding = [...holds.keys()].some(id => !(mode === "finger" && id === pid));
-    if (!holding && dive.t > .8) { dive.phase = "out"; dive.t = 0; worldAudio(false); whoosh(false); }
-  } else if (dive.phase === "out" && dive.t >= DIVE_OUT) {
-    dive.phase = "none"; state = "lit"; world = null;
+    if (otherHolds().length === 0 && dive.t > (dive.fast ? .15 : .6)) { dive.phase = "out"; dive.t = 0; worldAudio(false); whoosh(false); }
+  } else if (dive.phase === "out" && dive.t >= dOut()) {
+    dive.phase = "none"; state = "lit"; dive.jointSince = performance.now();
     if (mode === "breath") { drawing = false; breathState = "idle"; }
     else if (pid === null) drawing = false;
   }
@@ -1114,83 +1152,105 @@ function zoomFrame(z, glow, flash) {
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.drawImage(diveTmp, ox * (1 - 1 / z), oy * (1 - 1 / z), cv.width / z, cv.height / z, 0, 0, cv.width, cv.height);
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  // Geschwindigkeitslinien
   const n = 70, sp = clamp((z - 1) / 8, 0, 1);
   ctx.save(); ctx.globalCompositeOperation = "lighter"; ctx.lineCap = "round";
   for (let i = 0; i < n; i++) {
-    const a = i * 2.39996, r0 = (60 + ((i * 97 + performance.now() * .9) % 400)) * (1 + sp), r1 = r0 + 40 + sp * 200;
+    const a = i * 2.39996, r0 = (60 + ((i * 97 + performance.now() * .9) % 400)) * (1 + sp), r1b = r0 + 40 + sp * 200;
     ctx.strokeStyle = `rgba(255,${150 + (i * 37) % 100},60,${.25 * sp})`; ctx.lineWidth = 1 + (i % 3);
-    ctx.beginPath(); ctx.moveTo(dive.ox + Math.cos(a) * r0, dive.oy + Math.sin(a) * r0); ctx.lineTo(dive.ox + Math.cos(a) * r1, dive.oy + Math.sin(a) * r1); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(dive.ox + Math.cos(a) * r0, dive.oy + Math.sin(a) * r0); ctx.lineTo(dive.ox + Math.cos(a) * r1b, dive.oy + Math.sin(a) * r1b); ctx.stroke();
   }
   const g = ctx.createRadialGradient(dive.ox, dive.oy, 0, dive.ox, dive.oy, Math.max(W, H));
   g.addColorStop(0, `rgba(255,220,140,${glow})`); g.addColorStop(.4, `rgba(255,120,30,${glow * .7})`); g.addColorStop(1, `rgba(120,20,0,${glow * .4})`);
   ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
   ctx.restore();
-  if (flash > 0) { ctx.fillStyle = `rgba(255,245,225,${flash})`; ctx.fillRect(0, 0, W, H); }
+  if (flash > 0) { ctx.fillStyle = `rgba(255,236,200,${flash})`; ctx.fillRect(0, 0, W, H); }
 }
 function renderDive(t) {
   if (dive.phase === "in") {
-    const u = dive.t / DIVE_IN;
-    render(t); zoomFrame(Math.exp(u * u * Math.log(70)), u * u * .8, clamp((u - .82) / .18, 0, 1));
+    const u = dive.t / dIn();
+    render(t); zoomFrame(Math.exp(u * u * Math.log(70)), u * u * .8, clamp((u - .78) / .22, 0, 1));
   } else if (dive.phase === "world") {
     renderWorld(t);
-    if (dive.t < .35) { ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.fillStyle = `rgba(255,245,225,${1 - dive.t / .35})`; ctx.fillRect(0, 0, W, H); }
+    if (dive.t < .3) { ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.fillStyle = `rgba(255,236,200,${1 - dive.t / .3})`; ctx.fillRect(0, 0, W, H); }
   } else if (dive.phase === "out") {
-    const u = 1 - dive.t / DIVE_OUT;
-    render(t); zoomFrame(Math.exp(u * u * Math.log(70)), u * u * .8, clamp((u - .7) / .3, 0, 1));
+    const u = 1 - dive.t / dOut();
+    render(t); zoomFrame(Math.exp(u * u * Math.log(70)), u * u * .8, clamp((u - .65) / .35, 0, 1));
   }
 }
 
-// ---------- Die Welt: Krümelhausen ----------
-const PALETTE = ["#5fd3c6", "#a78bfa", "#a3e635", "#f472b6", "#60a5fa", "#fbbf24"];
-const SKIN = ["#8be36b", "#6ec6ff", "#ff8fc8", "#c4f05a", "#b69cff", "#7ef0d2"];
-const SHOUTS = ["AAAAH!", "DIE GLUT!", "Wer zieht da?!", "Unser Krümel!", "Rettet die Larven!", "Glorx! GLORX!", "Das Ende der Tüte!", "Zum Portal!", "Es ist so HEISS!", "Ich hab noch Raten offen!", "Bleeb!", "Nicht das Kraut!"];
+// ---------- Die Welt: Burg Krümelstein, mittelalterliche Mini-Stadt im Inneren der Glut ----------
+// Gezeichnet im Querformat mit "unten" = echter Boden beim Halten (Bildschirmseite gegenüber dem Filter).
+function worldDims() {
+  // Seite läuft hochkant (Drehsperre), Handy wird aber quer gehalten: Welt um 90° drehen, Boden = Seite gegenüber dem Filter
+  if (H > W) return [H, W, orient ? 1 : -1];
+  return [W, H, 0];                              // Seite ist schon quer: normal zeichnen
+}
+function worldTransform() {
+  const [, , side] = worldDims();
+  if (side === 0) { ctx.setTransform(dpr, 0, 0, dpr, 0, 0); return; }
+  // Boden links: Welt (0,0) liegt oben rechts auf dem Bildschirm, um 90° gedreht
+  if (side < 0) ctx.setTransform(new DOMMatrix([dpr, 0, 0, dpr, 0, 0]).translate(W, 0).rotate(90));
+  else ctx.setTransform(new DOMMatrix([dpr, 0, 0, dpr, 0, 0]).translate(0, H).rotate(-90));
+}
+const ROOF = ["#7c2d12", "#9a3412", "#5a1e0e", "#b4441a", "#6b2a14"];
+const WALLC = ["#f3c487", "#e9a865", "#f0b878", "#dd9455", "#f6d29c"];
+const SKIN = ["#fff1d6", "#ffd27a", "#ffab6e", "#ff8f73", "#e6d8c8", "#ffe39a"];
+const SHOUTS = ["AAAAH!", "DIE GLUT!", "Wer zieht da?!", "Die Mauer brennt!", "Rettet die Larven!", "Glorx! GLORX!", "Das Ende der Tüte!", "Holt Eimer!", "Es ist so HEISS!", "Ich hab noch Raten offen!", "Bleeb!", "Nicht das Kraut!", "Zur Burg!", "Mein Fachwerk!"];
 function hsh(n) { const x = Math.sin(n * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); }
 function makeWorld() {
-  const u = Math.min(W, H) / 390, ground = H * .76;
-  const blds = [];
-  let x = -20 * u;
-  while (x < W + 20 * u) {
-    const w = rand(34, 70) * u, h = rand(60, 170) * u * (H / 390) ** .3;
-    blds.push({ x, w, h, type: ["tower", "dome", "spire", "saucer", "tower"][(Math.random() * 5) | 0], col: PALETTE[(Math.random() * PALETTE.length) | 0],
-      fire: Math.random() < .75, tilt: Math.random() < .2 ? rand(-.12, .12) : 0, seed: Math.random() * 100, depth: Math.random() < .35 ? .7 : 1 });
-    x += w * rand(.75, 1.15);
+  [ww, wh] = worldDims();
+  const u = Math.min(ww, wh) / 300, ground = wh * .8, wallTop = ground - 74 * u;
+  // Häuserreihen: hinten klein, vorne groß, dicht an dicht
+  const rows = [];
+  for (let r = 0; r < 3; r++) {
+    const sc = [.62, .8, 1][r], base = ground - [92, 80, 70][r] * u, list = [];
+    let x = -30 * u;
+    while (x < ww + 30 * u) {
+      const w = rand(30, 52) * u * sc, h = rand(34, 66) * u * sc;
+      list.push({ x, w, h, base, sc, roof: ROOF[(Math.random() * ROOF.length) | 0], wall: WALLC[(Math.random() * WALLC.length) | 0],
+        fire: Math.random() < .6, collapsed: Math.random() < .14, seed: Math.random() * 100, chimney: Math.random() < .5, roofH: rand(.55, .9) });
+      x += w * rand(.82, 1.02);
+    }
+    rows.push(list);
   }
-  blds.sort((a, b) => a.depth - b.depth);
+  // Mauertürme
+  const towers = [];
+  for (let x = rand(20, 60) * u; x < ww; x += rand(130, 190) * u) towers.push({ x, w: rand(38, 46) * u, h: rand(110, 140) * u, fire: Math.random() < .7, seed: Math.random() * 100 });
   const crs = [];
-  for (let i = 0; i < 26; i++) crs.push(newCreature(u, ground, true));
+  for (let i = 0; i < 30; i++) crs.push(newCreature(u, ground, wallTop, true));
   const embers = [];
-  for (let i = 0; i < 70; i++) embers.push({ x: Math.random() * W, y: Math.random() * H, v: rand(40, 140) * u, r: rand(1, 3) * u, ph: Math.random() * 6 });
-  return { u, ground, blds, crs, embers, t: 0, saucer: { t: -2, y: H * .22 }, shake: 0, portal: { x: W * rand(.72, .86), y: ground - 52 * u } };
+  for (let i = 0; i < 80; i++) embers.push({ x: Math.random() * ww, y: Math.random() * wh, v: rand(40, 150) * u, r: rand(1, 3.2) * u, ph: Math.random() * 6 });
+  return { u, ground, wallTop, rows, towers, crs, embers, t: 0, saucer: { t: -2, y: wh * .2 }, shake: 0, portal: { x: ww * rand(.7, .85), y: wh * .2 }, gate: ww * rand(.35, .6) };
 }
-function newCreature(u, ground, scatter) {
-  const dir = Math.random() < .5 ? -1 : 1;
-  return { x: scatter ? Math.random() * W : (dir > 0 ? -20 * u : W + 20 * u), y: ground + rand(4, 26) * u, vx: dir * rand(70, 170) * u, s: rand(.75, 1.25) * u,
-    col: SKIN[(Math.random() * SKIN.length) | 0], ph: Math.random() * 6, fire: Math.random() < .3, jump: 0, vy: 0, bub: scatter && Math.random() < .12 ? rand(.5, 1.8) : -rand(0, 3),
-    txt: SHOUTS[(Math.random() * SHOUTS.length) | 0], eyes: Math.random() < .2 ? 3 : 2, gone: 0, look: rand(-1, 1) };
+function newCreature(u, ground, wallTop, scatter) {
+  const dir = Math.random() < .5 ? -1 : 1, onWall = Math.random() < .35;
+  return { x: scatter ? Math.random() * ww : (dir > 0 ? -20 * u : ww + 20 * u), y: onWall ? wallTop + 2 * u : ground + rand(6, 34) * u, wall: onWall,
+    vx: dir * rand(80, 190) * u, s: rand(1, 1.45) * u, col: SKIN[(Math.random() * SKIN.length) | 0], ph: Math.random() * 6,
+    fire: Math.random() < .3, bucket: !onWall && Math.random() < .2, jump: 0, vy: 0, jy: 0, bub: scatter && Math.random() < .12 ? rand(.5, 1.8) : -rand(0, 3),
+    txt: SHOUTS[(Math.random() * SHOUTS.length) | 0], eyes: Math.random() < .2 ? 3 : 2, gone: 0 };
 }
 function updateWorld(dt) {
   const w = world; w.t += dt; w.shake = Math.max(0, w.shake - dt * 2);
-  if (Math.random() < dt * .6) w.shake = .6;                       // Einstürze rumpeln
+  if (Math.random() < dt * .7) w.shake = .7;
   for (const c of w.crs) {
-    if (c.gone > 0) { c.gone += dt; if (c.gone > .45) Object.assign(c, newCreature(w.u, w.ground, false)); continue; }
+    if (c.gone > 0) { c.gone += dt; if (c.gone > .45) Object.assign(c, newCreature(w.u, w.ground, w.wallTop, false)); continue; }
     c.x += c.vx * dt * (c.fire ? 1.5 : 1); c.ph += dt * (10 + Math.abs(c.vx) / (8 * w.u));
-    if (Math.random() < dt * .5) c.vx *= -1;                        // panisch kehrtmachen
-    if (c.x < -30 * w.u || c.x > W + 30 * w.u) { c.vx = -c.vx; c.x = clamp(c.x, -30 * w.u, W + 30 * w.u); }
-    if (c.jump <= 0 && Math.random() < dt * .7) { c.jump = .001; c.vy = -rand(160, 300) * w.u; }
-    if (c.jump > 0) { c.jump += dt; c.vy += 900 * w.u * dt; c.jy = (c.jy || 0) + c.vy * dt; if (c.jy >= 0) { c.jy = 0; c.jump = 0; } }
+    if (Math.random() < dt * .55) c.vx *= -1;
+    if (c.x < -30 * w.u || c.x > ww + 30 * w.u) { c.vx = -c.vx; c.x = clamp(c.x, -30 * w.u, ww + 30 * w.u); }
+    if (c.jump <= 0 && Math.random() < dt * .7) { c.jump = .001; c.vy = -rand(180, 320) * w.u; }
+    if (c.jump > 0) { c.jump += dt; c.vy += 950 * w.u * dt; c.jy += c.vy * dt; if (c.jy >= 0) { c.jy = 0; c.jump = 0; } }
     c.bub -= dt;
     if (c.bub < -rand(1, 4) && w.crs.filter(o => o.bub > 0).length < 4) { c.bub = rand(.8, 1.6); c.txt = SHOUTS[(Math.random() * SHOUTS.length) | 0]; }
-    if (Math.abs(c.x - w.portal.x) < 14 * w.u && Math.random() < dt * 3) c.gone = .001;   // rein ins Portal
+    if (!c.wall && Math.abs(c.x - w.gate) < 10 * w.u && Math.random() < dt * 2) c.gone = .001;   // durchs Stadttor geflüchtet
   }
-  for (const e of w.embers) { e.y += e.v * dt; e.x += Math.sin(w.t * 2 + e.ph) * 20 * w.u * dt - 15 * w.u * dt; if (e.y > H + 10) { e.y = -10; e.x = Math.random() * W * 1.2; } }
-  w.saucer.t += dt; if (w.saucer.t > 7) { w.saucer.t = -rand(1, 4); w.saucer.y = H * rand(.12, .3); }
+  for (const e of w.embers) { e.y += e.v * dt; e.x += Math.sin(w.t * 2 + e.ph) * 20 * w.u * dt - 15 * w.u * dt; if (e.y > wh + 10) { e.y = -10; e.x = Math.random() * ww * 1.2; } }
+  w.saucer.t += dt; if (w.saucer.t > 7) { w.saucer.t = -rand(2, 5); w.saucer.y = wh * rand(.1, .25); }
 }
 
-// Zeichen-Helfer im Cartoon-Stil: dicke schwarze Kontur, leicht "kochende" Linien
+// Zeichen-Helfer im Cartoon-Stil
 let boil = 0;
 const jit = (i, a) => (hsh(i * 7.13 + boil) - .5) * a;
-function inked(fill, lw) { ctx.fillStyle = fill; ctx.fill(); ctx.lineWidth = lw; ctx.strokeStyle = "#141018"; ctx.lineJoin = "round"; ctx.stroke(); }
+function inked(fill, lw) { ctx.fillStyle = fill; ctx.fill(); ctx.lineWidth = lw; ctx.strokeStyle = "#1a0d08"; ctx.lineJoin = "round"; ctx.stroke(); }
 function flame(x, y, s, t, sd) {
   const f = 1 + .18 * Math.sin(t * 13 + sd) + .1 * Math.sin(t * 29 + sd * 2);
   const tongues = [[-.55, .7], [0, 1.15], [.5, .8]];
@@ -1205,105 +1265,154 @@ function flame(x, y, s, t, sd) {
 }
 function renderWorld(t) {
   const w = world, u = w.u; boil = Math.floor(t * 8);
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.fillStyle = "#1a0806"; ctx.fillRect(0, 0, W, H);
+  worldTransform();
   const sh = w.shake * 6 * u; ctx.translate((hsh(boil) - .5) * sh, (hsh(boil + 3) - .5) * sh);
-  // Himmel: glühende Innenwelt des Joints
+  // Himmel: Rauch und Glut, in den Farben der Verbrennung
   const sky = ctx.createLinearGradient(0, 0, 0, w.ground);
-  sky.addColorStop(0, "#2a0b3d"); sky.addColorStop(.45, "#8a1c4a"); sky.addColorStop(.8, "#ff6a2a"); sky.addColorStop(1, "#ffb347");
-  ctx.fillStyle = sky; ctx.fillRect(-20, -20, W + 40, H + 40);
-  // riesige glühende Tabakfasern im Hintergrund
-  for (let i = 0; i < 4; i++) {
-    const y = H * (.12 + i * .13), a = -.25 + i * .17;
-    ctx.save(); ctx.translate(W * (.2 + i * .25), y); ctx.rotate(a);
-    ctx.beginPath(); ctx.roundRect ? ctx.roundRect(-W * .6, -18 * u, W * 1.2, 36 * u, 18 * u) : ctx.rect(-W * .6, -18 * u, W * 1.2, 36 * u);
-    inked("#4a1626", 3 * u);
-    ctx.strokeStyle = `rgba(255,${120 + i * 20},40,${.55 + .3 * Math.sin(t * 3 + i)})`; ctx.lineWidth = 3 * u;
-    for (let k = 0; k < 7; k++) { const x0 = -W * .5 + k * W * .17; ctx.beginPath(); ctx.moveTo(x0, -12 * u); ctx.lineTo(x0 + 18 * u, 0); ctx.lineTo(x0 + 6 * u, 12 * u); ctx.stroke(); }
+  sky.addColorStop(0, "#160604"); sky.addColorStop(.35, "#4a1208"); sky.addColorStop(.7, "#b8360c"); sky.addColorStop(1, "#ff8a2a");
+  ctx.fillStyle = sky; ctx.fillRect(-20, -20, ww + 40, wh + 40);
+  // riesige glühende Tabakfasern am Himmel
+  for (let i = 0; i < 3; i++) {
+    ctx.save(); ctx.translate(ww * (.15 + i * .35), wh * (.1 + i * .08)); ctx.rotate(-.2 + i * .15);
+    ctx.beginPath(); ctx.roundRect ? ctx.roundRect(-ww * .5, -14 * u, ww, 28 * u, 14 * u) : ctx.rect(-ww * .5, -14 * u, ww, 28 * u);
+    inked("#3a0e08", 2.6 * u);
+    ctx.strokeStyle = `rgba(255,${110 + i * 25},30,${.5 + .3 * Math.sin(t * 3 + i)})`; ctx.lineWidth = 2.6 * u;
+    for (let k = 0; k < 8; k++) { const x0b = -ww * .45 + k * ww * .12; ctx.beginPath(); ctx.moveTo(x0b, -10 * u); ctx.lineTo(x0b + 14 * u, 0); ctx.lineTo(x0b + 4 * u, 10 * u); ctx.stroke(); }
     ctx.restore();
   }
-  // Untertasse auf der Flucht, mit Traktorstrahl
-  if (w.saucer.t > 0) {
-    const sx = -60 * u + (W + 120 * u) * (w.saucer.t / 7), sy = w.saucer.y + Math.sin(t * 3) * 8 * u;
-    ctx.save(); ctx.translate(sx, sy); ctx.rotate(Math.sin(t * 4) * .08);
-    ctx.fillStyle = "rgba(170,255,120,.22)"; ctx.beginPath(); ctx.moveTo(-10 * u, 6 * u); ctx.lineTo(10 * u, 6 * u); ctx.lineTo(26 * u, w.ground - sy); ctx.lineTo(-26 * u, w.ground - sy); ctx.fill();
-    ctx.beginPath(); ctx.ellipse(0, 0, 34 * u, 10 * u, 0, 0, 7); inked("#b8c4cc", 3 * u);
-    ctx.beginPath(); ctx.ellipse(0, -7 * u, 14 * u, 10 * u, 0, Math.PI, 0); inked("#7fe3ff", 3 * u);
-    for (let k = -2; k <= 2; k++) { ctx.beginPath(); ctx.arc(k * 11 * u, 2 * u, 2.6 * u, 0, 7); ctx.fillStyle = Math.sin(t * 12 + k) > 0 ? "#ffef5a" : "#ff5ab4"; ctx.fill(); }
-    ctx.restore();
+  // dicke Rauchbank
+  for (let i = 0; i < 14; i++) {
+    const x = ((i * 97 + t * 14 * u) % (ww + 120 * u)) - 60 * u, y = wh * .26 + Math.sin(i * 1.7) * 18 * u, r = (26 + (i * 13) % 22) * u;
+    ctx.globalAlpha = .75; ctx.beginPath(); ctx.arc(x, y, r, 0, 7); inked("#2b1510", 2 * u); ctx.globalAlpha = 1;
   }
-  // Rauchsäulen (comic-wolkig)
-  for (const b of w.blds) if (b.fire && hsh(b.seed + 7) > .45) for (let k = 0; k < 3; k++) {
-    const ph = ((t * .3 + k / 3 + b.seed) % 1), px = b.x + b.w / 2 + Math.sin(ph * 6 + b.seed) * 12 * u - ph * 26 * u, py = w.ground - b.h - ph * H * .38;
-    ctx.globalAlpha = (1 - ph) * .9;
-    ctx.beginPath(); ctx.arc(px, py, (9 + ph * 20) * u, 0, 7); inked("#3e3346", 2.2 * u);
-    ctx.globalAlpha = 1;
-  }
-  // Gebäude
-  for (const b of w.blds) drawBuilding(b, t, u, w.ground);
-  // Boden
-  ctx.beginPath(); ctx.moveTo(-20, w.ground); for (let x = -20; x <= W + 20; x += 20 * u) ctx.lineTo(x, w.ground + Math.sin(x * .03) * 3 * u + jit(x, 1.5 * u)); ctx.lineTo(W + 20, H + 20); ctx.lineTo(-20, H + 20); ctx.closePath();
-  inked("#3b2418", 3 * u);
-  ctx.strokeStyle = "rgba(255,140,60,.25)"; ctx.lineWidth = 2 * u;
-  for (let i = 0; i < 18; i++) { const x = hsh(i) * W, y = w.ground + 14 * u + hsh(i + 9) * (H - w.ground - 20 * u); ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + 14 * u, y + 4 * u); ctx.stroke(); }
-  // Portal
+  // Portal (glühender Wirbel) und fliehende Untertasse
   drawPortal(w.portal.x, w.portal.y, u, t);
+  if (w.saucer.t > 0) {
+    const sx = -60 * u + (ww + 120 * u) * (w.saucer.t / 7), sy = w.saucer.y + Math.sin(t * 3) * 8 * u;
+    ctx.save(); ctx.translate(sx, sy); ctx.rotate(Math.sin(t * 4) * .08);
+    ctx.fillStyle = "rgba(255,230,150,.2)"; ctx.beginPath(); ctx.moveTo(-10 * u, 6 * u); ctx.lineTo(10 * u, 6 * u); ctx.lineTo(28 * u, w.ground - sy); ctx.lineTo(-28 * u, w.ground - sy); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(0, 0, 34 * u, 10 * u, 0, 0, 7); inked("#c9a27a", 3 * u);
+    ctx.beginPath(); ctx.ellipse(0, -7 * u, 14 * u, 10 * u, 0, Math.PI, 0); inked("#ffe2a8", 3 * u);
+    for (let k = -2; k <= 2; k++) { ctx.beginPath(); ctx.arc(k * 11 * u, 2 * u, 2.6 * u, 0, 7); ctx.fillStyle = Math.sin(t * 12 + k) > 0 ? "#fff2a0" : "#ff6a3a"; ctx.fill(); }
+    ctx.restore();
+  }
+  // Burg auf dem Hügel im Hintergrund
+  drawCastle(ww * .5, w.ground - 96 * u, u, t);
+  // Häuserreihen von hinten nach vorne
+  for (const row of w.rows) for (const hs of row) drawHouse(hs, u, t);
+  // Stadtmauer mit Zinnen, Toren und Türmen
+  drawWall(w, u, t);
+  // Boden vor der Mauer
+  ctx.beginPath(); ctx.moveTo(-20, w.ground); for (let x = -20; x <= ww + 20; x += 20 * u) ctx.lineTo(x, w.ground + Math.sin(x * .03) * 3 * u + jit(x, 1.5 * u)); ctx.lineTo(ww + 20, wh + 20); ctx.lineTo(-20, wh + 20); ctx.closePath();
+  inked("#2a120a", 3 * u);
+  ctx.strokeStyle = "rgba(255,120,40,.35)"; ctx.lineWidth = 2 * u;
+  for (let i = 0; i < 22; i++) { const x = hsh(i) * ww, y = w.ground + 12 * u + hsh(i + 9) * (wh - w.ground - 16 * u); ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + 12 * u, y + 3 * u); ctx.lineTo(x + 20 * u, y + 1 * u); ctx.stroke(); }
   // Bewohner
   for (const c of w.crs.slice().sort((a, b) => a.y - b.y)) drawCreature(c, t, u);
-  // herabregnende Glut
+  // Glutregen
   ctx.save(); ctx.globalCompositeOperation = "lighter";
   for (const e of w.embers) { const g = ctx.createRadialGradient(e.x, e.y, 0, e.x, e.y, e.r * 3); g.addColorStop(0, "rgba(255,220,120,.95)"); g.addColorStop(1, "rgba(255,80,0,0)"); ctx.fillStyle = g; ctx.fillRect(e.x - e.r * 3, e.y - e.r * 3, e.r * 6, e.r * 6); }
   ctx.restore();
-  // Hitze-Vignette
-  const vg = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * .3, W / 2, H / 2, Math.max(W, H) * .75);
-  vg.addColorStop(0, "rgba(255,80,0,0)"); vg.addColorStop(1, `rgba(120,10,0,${.45 + .1 * Math.sin(t * 5)})`);
-  ctx.fillStyle = vg; ctx.fillRect(-20, -20, W + 40, H + 40);
-  // Einblendung
+  const vg = ctx.createRadialGradient(ww / 2, wh / 2, Math.min(ww, wh) * .3, ww / 2, wh / 2, Math.max(ww, wh) * .75);
+  vg.addColorStop(0, "rgba(255,80,0,0)"); vg.addColorStop(1, `rgba(90,8,0,${.5 + .1 * Math.sin(t * 5)})`);
+  ctx.fillStyle = vg; ctx.fillRect(-20, -20, ww + 40, wh + 40);
   ctx.font = `${Math.round(15 * u)}px Bangers, Impact, sans-serif`; ctx.textBaseline = "top";
-  const cap = "LIVE AUS DER GLUT · KRÜMELHAUSEN · 0,3 MM";
-  ctx.lineWidth = 4 * u; ctx.strokeStyle = "#141018"; ctx.strokeText(cap, 16, 14 + 4 * u); ctx.fillStyle = "#97ff5a"; ctx.fillText(cap, 16, 14 + 4 * u);
+  const cap = "LIVE AUS DER GLUT · BURG KRÜMELSTEIN · 0,3 MM";
+  ctx.lineWidth = 4 * u; ctx.strokeStyle = "#1a0d08"; ctx.strokeText(cap, 16, 14); ctx.fillStyle = "#ffd36a"; ctx.fillText(cap, 16, 14);
 }
-function drawBuilding(b, t, u, ground) {
-  ctx.save(); ctx.translate(b.x + b.w / 2, ground); ctx.rotate(b.tilt); if (b.depth < 1) { ctx.globalAlpha = .9; ctx.scale(.85, .85); }
-  const w = b.w, h = b.h, s = b.seed;
-  ctx.beginPath();
-  if (b.type === "tower") { ctx.moveTo(-w / 2 + jit(s, 2 * u), 0); ctx.lineTo(-w / 2 + jit(s + 1, 2 * u), -h + w * .3); ctx.quadraticCurveTo(0, -h - w * .2, w / 2 + jit(s + 2, 2 * u), -h + w * .3); ctx.lineTo(w / 2, 0); }
-  else if (b.type === "dome") { ctx.moveTo(-w / 2, 0); ctx.lineTo(-w / 2, -h * .35); ctx.bezierCurveTo(-w / 2, -h * .95, w / 2, -h * .95, w / 2 + jit(s, 2 * u), -h * .35); ctx.lineTo(w / 2, 0); }
-  else if (b.type === "spire") { ctx.moveTo(-w / 2, 0); ctx.lineTo(-w * .12 + jit(s, 2 * u), -h); ctx.lineTo(w * .12, -h); ctx.lineTo(w / 2, 0); }
-  else { ctx.rect(-w * .1, -h * .8, w * .2, h * .8); }
-  ctx.closePath(); inked(b.col, 3 * u);
-  // Schatten-Seite
-  ctx.save(); ctx.clip(); ctx.fillStyle = "rgba(20,10,30,.25)"; ctx.fillRect(w * .1, -h * 1.2, w, h * 1.3); ctx.restore();
-  if (b.type === "saucer") { ctx.beginPath(); ctx.ellipse(0, -h * .8, w * .7, w * .2, 0, 0, 7); inked(b.col, 3 * u); ctx.beginPath(); ctx.ellipse(0, -h * .8 - w * .12, w * .3, w * .2, 0, Math.PI, 0); inked("#7fe3ff", 3 * u); }
-  if (b.type === "tower") { ctx.beginPath(); ctx.moveTo(0, -h - w * .05); ctx.lineTo(0, -h - w * .5); ctx.lineWidth = 3 * u; ctx.strokeStyle = "#141018"; ctx.stroke(); ctx.beginPath(); ctx.arc(0, -h - w * .55, 5 * u, 0, 7); inked(Math.sin(t * 6 + s) > 0 ? "#ff5ab4" : "#ffef5a", 2.5 * u); }
-  // Fenster, manche flackern
-  const rows = Math.floor(h / (22 * u)), cols = b.type === "spire" ? 1 : 2;
-  for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
-    const wx = (cols === 1 ? 0 : (c ? w * .18 : -w * .18)), wy = -h * .15 - r * 20 * u;
-    if (b.type === "dome" && wy < -h * .7) continue;
-    if (b.type === "saucer") continue;
-    const lit = hsh(s + r * 3 + c) > .3 && Math.sin(t * (4 + r) + s + c) > -.6;
-    ctx.beginPath(); ctx.ellipse(wx, wy, 5 * u, 6 * u, 0, 0, 7); inked(lit ? "#ffe066" : "#2a1d33", 2 * u);
+function drawCastle(cx, base, u, t) {
+  ctx.save(); ctx.translate(cx, base);
+  // Hügel
+  ctx.beginPath(); ctx.ellipse(0, 30 * u, 170 * u, 46 * u, 0, Math.PI, 0); inked("#3a170c", 2.5 * u);
+  const stone = "#7a4128";
+  const tower = (x, w, h, roof) => {
+    ctx.beginPath(); ctx.rect(x - w / 2, -h, w, h + 20 * u); inked(stone, 2.5 * u);
+    for (let k = -1; k <= 1; k++) { ctx.beginPath(); ctx.rect(x + k * w / 3 - w / 8, -h - 8 * u, w / 4, 9 * u); inked(stone, 2 * u); }
+    if (roof) { ctx.beginPath(); ctx.moveTo(x - w * .62, -h - 6 * u); ctx.lineTo(x + jit(x, 2 * u), -h - w * 1.3); ctx.lineTo(x + w * .62, -h - 6 * u); ctx.closePath(); inked("#5a1e0e", 2.5 * u); }
+    ctx.beginPath(); ctx.ellipse(x, -h * .55, w * .14, w * .2, 0, 0, 7); inked(Math.sin(t * 7 + x) > -.3 ? "#ffcf5a" : "#7a2a10", 2 * u);
+  };
+  ctx.beginPath(); ctx.rect(-70 * u, -40 * u, 140 * u, 60 * u); inked(stone, 2.5 * u);
+  tower(-70 * u, 26 * u, 70 * u, true); tower(70 * u, 26 * u, 64 * u, true); tower(0, 34 * u, 100 * u, true);
+  // Fahne brennt
+  ctx.beginPath(); ctx.moveTo(0, -100 * u - 34 * u * 1.3); ctx.lineTo(0, -100 * u - 34 * u * 1.3 - 22 * u); ctx.lineWidth = 2 * u; ctx.strokeStyle = "#1a0d08"; ctx.stroke();
+  flame(4 * u, -100 * u - 34 * u * 1.3 - 12 * u, 12 * u, t, 3);
+  flame(-70 * u, -76 * u, 16 * u, t, 1); flame(30 * u, -40 * u, 20 * u, t, 2);
+  ctx.restore();
+}
+function drawHouse(hs, u, t) {
+  const { x, w, h, base, sc } = hs, s = hs.seed, rh = w * hs.roofH;
+  ctx.save(); ctx.translate(x + w / 2, base);
+  // Fachwerk-Wand
+  ctx.beginPath(); ctx.rect(-w / 2 + jit(s, 1.5 * u), -h, w, h); inked(hs.wall, 2.4 * u * sc);
+  ctx.strokeStyle = "#3a1a0c"; ctx.lineWidth = 2.4 * u * sc;
+  ctx.beginPath(); ctx.moveTo(-w / 2, -h * .5); ctx.lineTo(w / 2, -h * .5);
+  ctx.moveTo(-w / 2, -h); ctx.lineTo(-w * .1, -h * .5); ctx.moveTo(w / 2, -h); ctx.lineTo(w * .1, -h * .5);
+  ctx.moveTo(-w / 2, -h * .5); ctx.lineTo(-w * .15, 0); ctx.moveTo(w / 2, -h * .5); ctx.lineTo(w * .15, 0); ctx.stroke();
+  // Fenster glühen
+  for (const [wx, wy] of [[-w * .28, -h * .75], [w * .28, -h * .75], [-w * .28, -h * .25], [w * .28, -h * .25]]) {
+    const lit = hsh(s + wx) > .25;
+    ctx.beginPath(); ctx.rect(wx - 4.5 * u * sc, wy - 5 * u * sc, 9 * u * sc, 10 * u * sc); inked(lit ? (Math.sin(t * 8 + s + wy) > -.4 ? "#ffd04a" : "#ff8a2a") : "#2a120a", 2 * u * sc);
   }
-  // Flammen
-  if (b.fire) {
-    const n = 1 + Math.floor(hsh(s) * 3);
-    for (let k = 0; k < n; k++) {
-      const fx = (hsh(s + k) - .5) * w * .7, fy = b.type === "saucer" ? -h * .8 - w * .1 : -h * (k ? .45 + hsh(s + k * 5) * .4 : (b.type === "dome" ? .78 : .95));
-      flame(fx, fy, (14 + hsh(s + k * 2) * 12) * u, t, s + k);
-    }
+  // Tür
+  ctx.beginPath(); ctx.moveTo(-5 * u * sc, 0); ctx.lineTo(-5 * u * sc, -12 * u * sc); ctx.quadraticCurveTo(0, -17 * u * sc, 5 * u * sc, -12 * u * sc); ctx.lineTo(5 * u * sc, 0); inked("#4a200e", 2 * u * sc);
+  // Dach (manche eingestürzt)
+  if (!hs.collapsed) {
+    ctx.beginPath(); ctx.moveTo(-w * .62, -h + 2 * u); ctx.lineTo(jit(s + 4, 2 * u), -h - rh); ctx.lineTo(w * .62, -h + 2 * u); ctx.closePath(); inked(hs.roof, 2.4 * u * sc);
+    ctx.strokeStyle = "rgba(30,10,4,.45)"; ctx.lineWidth = 1.2 * u * sc;
+    for (let k = 1; k < 4; k++) { const yk = -h - rh * (1 - k / 4); ctx.beginPath(); ctx.moveTo(-w * .62 * k / 4, yk); ctx.lineTo(w * .62 * k / 4, yk); ctx.stroke(); }
+    if (hs.chimney) { ctx.beginPath(); ctx.rect(w * .2, -h - rh * .75, 8 * u * sc, rh * .5); inked("#6a3a22", 2 * u * sc); }
+  } else {
+    // nur noch brennende Dachbalken
+    ctx.strokeStyle = "#1a0d08"; ctx.lineWidth = 3 * u * sc;
+    ctx.beginPath(); ctx.moveTo(-w * .55, -h); ctx.lineTo(-w * .1, -h - rh * .7); ctx.moveTo(w * .5, -h); ctx.lineTo(w * .2, -h - rh * .45); ctx.stroke();
+  }
+  if (hs.fire || hs.collapsed) {
+    flame(jit(s, 2 * u), -h - (hs.collapsed ? rh * .3 : rh * .6), (18 + hsh(s) * 14) * u * sc, t, s);
+    if (hsh(s + 1) > .5) flame(w * .3, -h * .75, 10 * u * sc, t, s + 2);
   }
   ctx.restore();
 }
+function drawWall(w, u, t) {
+  const top = w.wallTop, bot = w.ground;
+  // Mauerband
+  ctx.beginPath(); ctx.rect(-20, top, ww + 40, bot - top); inked("#9a5a34", 3 * u);
+  // Steinfugen
+  ctx.strokeStyle = "rgba(40,16,6,.55)"; ctx.lineWidth = 1.4 * u;
+  for (let y = top + 12 * u, r = 0; y < bot; y += 12 * u, r++) {
+    ctx.beginPath(); ctx.moveTo(-20, y); ctx.lineTo(ww + 20, y); ctx.stroke();
+    for (let x = (r % 2) * 11 * u; x < ww; x += 22 * u) { ctx.beginPath(); ctx.moveTo(x + jit(x + y, 1.2 * u), y - 12 * u); ctx.lineTo(x, y); ctx.stroke(); }
+  }
+  // Feuerschein auf der Mauer
+  const lg = ctx.createLinearGradient(0, top, 0, bot); lg.addColorStop(0, `rgba(255,150,40,${.35 + .1 * Math.sin(t * 6)})`); lg.addColorStop(1, "rgba(60,10,0,.35)");
+  ctx.fillStyle = lg; ctx.fillRect(-20, top, ww + 40, bot - top);
+  // Zinnen
+  for (let x = -10 * u; x < ww + 20; x += 20 * u) { ctx.beginPath(); ctx.rect(x, top - 11 * u, 11 * u, 12 * u); inked("#a8653c", 2.4 * u); }
+  // Stadttor
+  ctx.beginPath(); ctx.moveTo(w.gate - 18 * u, bot); ctx.lineTo(w.gate - 18 * u, bot - 30 * u); ctx.quadraticCurveTo(w.gate, bot - 48 * u, w.gate + 18 * u, bot - 30 * u); ctx.lineTo(w.gate + 18 * u, bot); inked("#1f0b05", 3 * u);
+  ctx.strokeStyle = "#5a2a14"; ctx.lineWidth = 2 * u; for (let k = -1; k <= 1; k++) { ctx.beginPath(); ctx.moveTo(w.gate + k * 9 * u, bot); ctx.lineTo(w.gate + k * 9 * u, bot - 36 * u); ctx.stroke(); }
+  // Türme
+  for (const tw of w.towers) {
+    ctx.beginPath(); ctx.rect(tw.x - tw.w / 2, bot - tw.h, tw.w, tw.h); inked("#a0603a", 3 * u);
+    ctx.strokeStyle = "rgba(40,16,6,.5)"; ctx.lineWidth = 1.3 * u;
+    for (let y = bot - tw.h + 14 * u; y < bot; y += 14 * u) { ctx.beginPath(); ctx.moveTo(tw.x - tw.w / 2, y); ctx.lineTo(tw.x + tw.w / 2, y); ctx.stroke(); }
+    ctx.beginPath(); ctx.moveTo(tw.x - tw.w * .7, bot - tw.h + 2 * u); ctx.lineTo(tw.x + jit(tw.seed, 2 * u), bot - tw.h - tw.w * 1.1); ctx.lineTo(tw.x + tw.w * .7, bot - tw.h + 2 * u); ctx.closePath(); inked("#6b240f", 3 * u);
+    ctx.beginPath(); ctx.ellipse(tw.x, bot - tw.h * .6, 4 * u, 8 * u, 0, 0, 7); inked(Math.sin(t * 6 + tw.seed) > -.2 ? "#ffd04a" : "#ff7a2a", 2 * u);
+    if (tw.fire) flame(tw.x + jit(tw.seed, 2 * u), bot - tw.h - tw.w * .5, 22 * u, t, tw.seed);
+  }
+  // Flammen entlang der Mauerkrone
+  for (let i = 0; i < 8; i++) { const x = hsh(i + 30) * ww; flame(x, top - 9 * u, (12 + hsh(i) * 10) * u, t, i * 3.1); }
+}
 function drawPortal(x, y, u, t) {
   ctx.save(); ctx.translate(x, y);
-  const R = 34 * u;
-  const g = ctx.createRadialGradient(0, 0, 0, 0, 0, R * 1.6);
-  g.addColorStop(0, "rgba(190,255,120,.9)"); g.addColorStop(.6, "rgba(80,220,60,.5)"); g.addColorStop(1, "rgba(60,200,40,0)");
-  ctx.fillStyle = g; ctx.beginPath(); ctx.ellipse(0, 0, R * 1.6, R * 2, 0, 0, 7); ctx.fill();
-  ctx.beginPath(); ctx.ellipse(0, 0, R * .85, R * 1.15, 0, 0, 7); inked("#5ee03a", 3 * u);
+  const R = 30 * u;
+  const g = ctx.createRadialGradient(0, 0, 0, 0, 0, R * 1.7);
+  g.addColorStop(0, "rgba(255,250,210,.9)"); g.addColorStop(.6, "rgba(255,170,60,.5)"); g.addColorStop(1, "rgba(255,90,20,0)");
+  ctx.fillStyle = g; ctx.beginPath(); ctx.ellipse(0, 0, R * 1.7, R * 2.1, 0, 0, 7); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(0, 0, R * .85, R * 1.15, 0, 0, 7); inked("#ffb340", 3 * u);
   ctx.lineCap = "round";
   for (let k = 0; k < 5; k++) {
-    ctx.strokeStyle = k % 2 ? "#d8ff9a" : "#2e9e1f"; ctx.lineWidth = 3 * u;
+    ctx.strokeStyle = k % 2 ? "#fff3c4" : "#e0661c"; ctx.lineWidth = 3 * u;
     ctx.beginPath();
     for (let a = 0; a < 5.5; a += .2) { const r = (a / 5.5) * R * .8, aa = a + t * 4 + k * 1.25; ctx.lineTo(Math.cos(aa) * r, Math.sin(aa) * r * 1.35); }
     ctx.stroke();
@@ -1311,83 +1420,106 @@ function drawPortal(x, y, u, t) {
   ctx.restore();
 }
 function drawCreature(c, t, u) {
-  if (c.gone > 0) { const k = 1 - c.gone / .45; if (k <= 0) return; ctx.save(); ctx.translate(world.portal.x, world.portal.y); ctx.rotate(c.gone * 20); ctx.scale(k, k); ctx.translate(-c.x, -(c.y - 14 * c.s)); }
+  if (c.gone > 0) { const k = 1 - c.gone / .45; if (k <= 0) return; ctx.save(); ctx.globalAlpha = k; }
   else ctx.save();
-  const s = c.s, x = c.x, y = c.y + (c.jy || 0), dir = Math.sign(c.vx) || 1, run = Math.sin(c.ph);
-  // Schatten
+  const s = c.s, x = c.x, y = c.y + c.jy, dir = Math.sign(c.vx) || 1, run = Math.sin(c.ph);
   ctx.fillStyle = "rgba(0,0,0,.3)"; ctx.beginPath(); ctx.ellipse(x, c.y + 2 * s, 10 * s, 3 * s, 0, 0, 7); ctx.fill();
-  ctx.lineCap = "round"; ctx.strokeStyle = "#141018"; ctx.lineWidth = 3 * s;
-  // Beine
+  ctx.lineCap = "round"; ctx.strokeStyle = "#1a0d08"; ctx.lineWidth = 3 * s;
   ctx.beginPath(); ctx.moveTo(x - 4 * s, y - 8 * s); ctx.lineTo(x - 4 * s + run * 7 * s, y); ctx.moveTo(x + 4 * s, y - 8 * s); ctx.lineTo(x + 4 * s - run * 7 * s, y); ctx.stroke();
-  // Arme panisch hochgerissen
   const wave = Math.sin(t * 22 + c.ph) * .5;
-  ctx.beginPath(); ctx.moveTo(x - 8 * s, y - 20 * s); ctx.lineTo(x - 16 * s, y - 34 * s + wave * 6 * s); ctx.moveTo(x + 8 * s, y - 20 * s); ctx.lineTo(x + 16 * s, y - 34 * s - wave * 6 * s); ctx.stroke();
-  // Körper
+  if (c.bucket) {   // Eimer-Träger
+    ctx.beginPath(); ctx.moveTo(x - 8 * s, y - 20 * s); ctx.lineTo(x + dir * 12 * s, y - 24 * s); ctx.moveTo(x + 8 * s, y - 20 * s); ctx.lineTo(x + dir * 14 * s, y - 22 * s); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(x + dir * 10 * s, y - 26 * s); ctx.lineTo(x + dir * 20 * s, y - 26 * s); ctx.lineTo(x + dir * 18 * s, y - 16 * s); ctx.lineTo(x + dir * 12 * s, y - 16 * s); ctx.closePath(); inked("#8a5a34", 2 * s);
+    ctx.fillStyle = "#7fd0ff"; ctx.beginPath(); ctx.arc(x + dir * (22 + (t * 40 % 8)) * s, y - 28 * s + (t * 40 % 8) * s, 1.6 * s, 0, 7); ctx.fill();
+  } else {
+    ctx.beginPath(); ctx.moveTo(x - 8 * s, y - 20 * s); ctx.lineTo(x - 16 * s, y - 34 * s + wave * 6 * s); ctx.moveTo(x + 8 * s, y - 20 * s); ctx.lineTo(x + 16 * s, y - 34 * s - wave * 6 * s); ctx.stroke();
+  }
   ctx.beginPath(); ctx.ellipse(x + jit(c.ph, .8 * s), y - 19 * s, 10 * s, 13 * s, 0, 0, 7); inked(c.col, 2.6 * s);
-  ctx.beginPath(); ctx.ellipse(x, y - 15 * s, 6 * s, 7 * s, 0, 0, 7); ctx.fillStyle = "rgba(255,255,255,.28)"; ctx.fill();
-  // Antennen
+  ctx.beginPath(); ctx.ellipse(x, y - 15 * s, 6 * s, 7 * s, 0, 0, 7); ctx.fillStyle = "rgba(255,255,255,.3)"; ctx.fill();
   ctx.lineWidth = 2 * s; ctx.beginPath(); ctx.moveTo(x - 3 * s, y - 31 * s); ctx.lineTo(x - 7 * s, y - 40 * s + wave * 2 * s); ctx.moveTo(x + 3 * s, y - 31 * s); ctx.lineTo(x + 8 * s, y - 39 * s - wave * 2 * s); ctx.stroke();
-  ctx.beginPath(); ctx.arc(x - 7 * s, y - 40 * s + wave * 2 * s, 2.4 * s, 0, 7); ctx.arc(x + 8 * s, y - 39 * s - wave * 2 * s, 2.4 * s, 0, 7); inked("#ff5ab4", 1.5 * s);
-  // Glupschaugen mit zitternden Pupillen
+  ctx.beginPath(); ctx.arc(x - 7 * s, y - 40 * s + wave * 2 * s, 2.4 * s, 0, 7); ctx.arc(x + 8 * s, y - 39 * s - wave * 2 * s, 2.4 * s, 0, 7); inked("#ff6a3a", 1.5 * s);
   const ex = c.eyes === 3 ? [-5.5, 0, 5.5] : [-4, 4];
   for (const e of ex) {
     ctx.beginPath(); ctx.arc(x + e * s, y - 25 * s, 4.4 * s, 0, 7); inked("#fff", 1.8 * s);
-    ctx.beginPath(); ctx.arc(x + e * s + dir * 1.3 * s + jit(c.ph + e, 1.6 * s), y - 25 * s + jit(c.ph + e + 3, 1.6 * s), 1.4 * s, 0, 7); ctx.fillStyle = "#141018"; ctx.fill();
+    ctx.beginPath(); ctx.arc(x + e * s + dir * 1.3 * s + jit(c.ph + e, 1.6 * s), y - 25 * s + jit(c.ph + e + 3, 1.6 * s), 1.4 * s, 0, 7); ctx.fillStyle = "#1a0d08"; ctx.fill();
   }
-  // schreiender Mund
   ctx.beginPath(); ctx.ellipse(x, y - 15 * s, 3.4 * s, 4.6 * s * (.7 + .3 * Math.abs(Math.sin(t * 18 + c.ph))), 0, 0, 7); inked("#3a0d1a", 1.6 * s);
   ctx.beginPath(); ctx.ellipse(x, y - 12.6 * s, 2 * s, 1.2 * s, 0, 0, 7); ctx.fillStyle = "#ff6b8a"; ctx.fill();
-  // Schweißtropfen
-  ctx.beginPath(); ctx.ellipse(x - dir * 11 * s, y - 30 * s + ((t * 30 + c.ph * 10) % 10) * s, 1.6 * s, 2.4 * s, 0, 0, 7); inked("#9fe8ff", 1.2 * s);
+  ctx.beginPath(); ctx.ellipse(x - dir * 11 * s, y - 30 * s + ((t * 30 + c.ph * 10) % 10) * s, 1.6 * s, 2.4 * s, 0, 0, 7); inked("#bfe9ff", 1.2 * s);
   if (c.fire) flame(x, y - 34 * s, 9 * s, t, c.ph);
   ctx.restore();
-  // Sprechblase
   if (c.bub > 0 && !c.gone) {
     ctx.save();
     ctx.font = `${Math.round(13 * u)}px Bangers, Impact, sans-serif`;
-    const tw = ctx.measureText(c.txt).width + 12 * u, bx2 = clamp(x - tw / 2, 4, W - tw - 4), by2 = y - 66 * s;
+    const tw = ctx.measureText(c.txt).width + 12 * u, bx2 = clamp(x - tw / 2, 4, ww - tw - 4), by2 = y - 68 * s;
     ctx.beginPath();
     if (ctx.roundRect) ctx.roundRect(bx2, by2, tw, 20 * u, 8 * u); else ctx.rect(bx2, by2, tw, 20 * u);
     ctx.moveTo(x - 4 * u, by2 + 20 * u); ctx.lineTo(x, by2 + 28 * u); ctx.lineTo(x + 4 * u, by2 + 20 * u);
-    inked("#fff", 2.2 * u);
-    ctx.fillStyle = "#141018"; ctx.textBaseline = "middle"; ctx.fillText(c.txt, bx2 + 6 * u, by2 + 10.5 * u);
+    inked("#fff8e6", 2.2 * u);
+    ctx.fillStyle = "#1a0d08"; ctx.textBaseline = "middle"; ctx.fillText(c.txt, bx2 + 6 * u, by2 + 10.5 * u);
     ctx.restore();
   }
 }
 
-// ---------- Ton für Kameraflug und Glutwelt ----------
+// ---------- Ton: Kameraflug, lodernde Flammen und panisches Geschrei ----------
 let wAudio = null;
 function whoosh(inward) {
   if (!ac || !noiseBuf) return;
-  const t = ac.currentTime, d = inward ? DIVE_IN : DIVE_OUT;
+  const t = ac.currentTime, d = inward ? dIn() : dOut();
   const n = ac.createBufferSource(), bp = ac.createBiquadFilter(), g = ac.createGain();
   n.buffer = noiseBuf; n.loop = true; bp.type = "bandpass"; bp.Q.value = 1.4;
   bp.frequency.setValueAtTime(inward ? 300 : 3000, t); bp.frequency.exponentialRampToValueAtTime(inward ? 4000 : 250, t + d);
   g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(.5, t + d * .8); g.gain.exponentialRampToValueAtTime(.001, t + d + .15);
   n.connect(bp).connect(g).connect(ac.destination); n.start(t); n.stop(t + d + .2);
 }
+function scream(t0, loud) {
+  // ein kleines, panisches "Aaaah": quiekig, mit Zittern, Tonhöhe kippt nach unten
+  const f = rand(700, 2000), dur = rand(.3, .8);
+  const o = ac.createOscillator(), o2 = ac.createOscillator(), vib = ac.createOscillator(), vg = ac.createGain(), bp = ac.createBiquadFilter(), bp2 = ac.createBiquadFilter(), sg = ac.createGain();
+  o.type = "sawtooth"; o2.type = "square"; o2.detune.value = rand(-30, 30);
+  o.frequency.setValueAtTime(f * rand(.9, 1.2), t0); o.frequency.linearRampToValueAtTime(f, t0 + .06); o.frequency.exponentialRampToValueAtTime(f * rand(.45, .75), t0 + dur);
+  o2.frequency.setValueAtTime(f, t0); o2.frequency.exponentialRampToValueAtTime(f * rand(.45, .75), t0 + dur);
+  vib.frequency.value = rand(12, 28); vg.gain.value = f * rand(.03, .08); vib.connect(vg); vg.connect(o.frequency); vg.connect(o2.frequency);
+  bp.type = "bandpass"; bp.frequency.value = f * 1.3; bp.Q.value = 2.5;            // Mund-Formant
+  bp2.type = "bandpass"; bp2.frequency.value = 2600; bp2.Q.value = 1.5;
+  sg.gain.setValueAtTime(0, t0); sg.gain.linearRampToValueAtTime(loud, t0 + .03); sg.gain.setTargetAtTime(loud * .7, t0 + .1, .1); sg.gain.exponentialRampToValueAtTime(.001, t0 + dur);
+  o.connect(bp); o2.connect(bp2); bp.connect(sg); bp2.connect(sg); sg.connect(wAudio.bus);
+  [o, o2, vib].forEach(n => { n.start(t0); n.stop(t0 + dur + .05); });
+}
 function worldAudio(on) {
   if (!ac || !noiseBuf) return;
   if (on) {
+    if (wAudio) return;
     const t = ac.currentTime;
+    const bus = ac.createGain(); bus.gain.setValueAtTime(0, t); bus.gain.linearRampToValueAtTime(1, t + .25); bus.connect(ac.destination);
+    // Lodern: tiefes Brausen + Fauchen
     const n = ac.createBufferSource(), lp = ac.createBiquadFilter(), g = ac.createGain();
-    n.buffer = noiseBuf; n.loop = true; lp.type = "lowpass"; lp.frequency.value = 650;
-    g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(.35, t + .3);
-    n.connect(lp).connect(g).connect(ac.destination); n.start(t);
-    const id = setInterval(() => {                     // winzige Schreie
-      if (!ac) return;
-      for (let k = 0; k < (Math.random() < .4 ? 2 : 1); k++) {
-        const t0 = ac.currentTime + Math.random() * .2, f = rand(900, 1900), o = ac.createOscillator(), vib = ac.createOscillator(), vg = ac.createGain(), bp = ac.createBiquadFilter(), sg = ac.createGain();
-        o.type = "square"; o.frequency.setValueAtTime(f, t0); o.frequency.exponentialRampToValueAtTime(f * rand(.5, .75), t0 + .4);
-        vib.frequency.value = rand(14, 24); vg.gain.value = f * .05; vib.connect(vg).connect(o.frequency);
-        bp.type = "bandpass"; bp.frequency.value = 1800; bp.Q.value = 1.2;
-        sg.gain.setValueAtTime(0, t0); sg.gain.linearRampToValueAtTime(.07, t0 + .03); sg.gain.exponentialRampToValueAtTime(.001, t0 + .42);
-        o.connect(bp).connect(sg).connect(ac.destination); o.start(t0); vib.start(t0); o.stop(t0 + .45); vib.stop(t0 + .45);
-      }
-    }, 320);
-    wAudio = { n, g, id };
+    n.buffer = noiseBuf; n.loop = true; lp.type = "lowpass"; lp.frequency.value = 420; g.gain.value = .9;
+    const lfo = ac.createOscillator(), lg = ac.createGain(); lfo.frequency.value = .7; lg.gain.value = .35; lfo.connect(lg).connect(g.gain); lfo.start(t);
+    n.connect(lp).connect(g).connect(bus); n.start(t, Math.random());
+    const n2 = ac.createBufferSource(), bp = ac.createBiquadFilter(), g2 = ac.createGain();
+    n2.buffer = noiseBuf; n2.loop = true; bp.type = "bandpass"; bp.frequency.value = 1100; bp.Q.value = .6; g2.gain.value = .22;
+    n2.connect(bp).connect(g2).connect(bus); n2.start(t, Math.random());
+    wAudio = { bus, n, n2, lfo, id: 0 };
+    // Knacken und Prasseln der Balken
+    const crack = () => {
+      if (!wAudio) return;
+      const t0 = ac.currentTime + Math.random() * .1, s = ac.createBufferSource(), hp = ac.createBiquadFilter(), cg = ac.createGain();
+      s.buffer = noiseBuf; hp.type = "highpass"; hp.frequency.value = rand(800, 3000);
+      cg.gain.setValueAtTime(rand(.2, .6), t0); cg.gain.exponentialRampToValueAtTime(.001, t0 + rand(.03, .12));
+      s.connect(hp).connect(cg).connect(wAudio.bus); s.start(t0, Math.random() * 1.5); s.stop(t0 + .15);
+    };
+    // Geschrei: dicht, mehrstimmig, unregelmäßig
+    wAudio.id = setInterval(() => {
+      if (!wAudio || ac.state !== "running") return;
+      const now = ac.currentTime, voices = 1 + (Math.random() * 3 | 0);
+      for (let k = 0; k < voices; k++) scream(now + Math.random() * .18, rand(.06, .14));
+      if (Math.random() < .7) crack(); if (Math.random() < .4) crack();
+    }, 170);
   } else if (wAudio) {
-    clearInterval(wAudio.id); wAudio.g.gain.setTargetAtTime(0, ac.currentTime, .08); wAudio.n.stop(ac.currentTime + .4); wAudio = null;
+    const a = wAudio; wAudio = null; clearInterval(a.id);
+    const t = ac.currentTime; a.bus.gain.cancelScheduledValues(t); a.bus.gain.setValueAtTime(a.bus.gain.value, t); a.bus.gain.linearRampToValueAtTime(0, t + .12);
+    a.n.stop(t + .2); a.n2.stop(t + .2); a.lfo.stop(t + .2);
   }
 }
 
@@ -1444,6 +1576,7 @@ document.getElementById("light").onclick = async () => {
 };
 document.getElementById("again").onclick = () => {
   document.getElementById("end").classList.add("gone");
+  dive.session = false; world = null;
   bx = burnStart; ashStart = bx; heat = 0; totalDrags = 0; smoke = []; ashFall = []; flakes = []; smears = []; sparks = [];
   stopMic(); removeEventListener("devicemotion", onMotion); mode = "finger"; knock = false;
   musicStop();
