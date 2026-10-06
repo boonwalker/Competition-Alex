@@ -58,6 +58,10 @@ button:focus-visible { outline: 2px solid var(--ember); outline-offset: 3px; }
         <button id="modeFinger" role="radio" aria-checked="true">Finger</button>
         <button id="modeBreath" role="radio" aria-checked="false">Atem (Mikrofon)</button>
       </div>
+      <div id="micOpts" hidden>
+        <label for="micSens">Mikrofon-Empfindlichkeit</label>
+        <input type="range" id="micSens" min="0" max="100" value="40">
+      </div>
     </div>
     <div class="group">
       <span class="lbl">Asche abklopfen</span>
@@ -502,21 +506,6 @@ function render(t) {
   ctx.restore();
   ctx.setTransform(base);
 
-  // grüner Wisch-Schweif (Mikro-Empfindlichkeit)
-  const nowMs = performance.now();
-  trail = trail.filter(q => nowMs - q.t < 650);
-  if (trail.length > 1) {
-    ctx.save(); ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.lineCap = "round"; ctx.lineJoin = "round"; ctx.globalCompositeOperation = "lighter";
-    for (let i = 1; i < trail.length; i++) {
-      const k = Math.pow(1 - (nowMs - trail[i].t) / 650, .7);
-      ctx.strokeStyle = `rgba(60,255,120,${k * .35})`; ctx.lineWidth = 26 * k + 4;
-      ctx.beginPath(); ctx.moveTo(trail[i - 1].x, trail[i - 1].y); ctx.lineTo(trail[i].x, trail[i].y); ctx.stroke();
-      ctx.strokeStyle = `rgba(190,255,210,${k})`; ctx.lineWidth = 7 * k + 1;
-      ctx.beginPath(); ctx.moveTo(trail[i - 1].x, trail[i - 1].y); ctx.lineTo(trail[i].x, trail[i].y); ctx.stroke();
-    }
-    ctx.restore(); ctx.setTransform(base);
-  }
-
   // Dunst nach ein paar Zügen
   if (haze > .01) {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -614,26 +603,21 @@ function finish() {
 // Finger an die Glut legen und am Joint entlang Richtung Mundstück ziehen; loslassen = ausatmen
 let downAt = 0, downPt = null, pid = null, fingerX = 0, drawFrom = 0, moved = false;
 const toFrame = e => frameInv.transformPoint(new DOMPoint(e.clientX, e.clientY));
-let swipeX = 0, trail = [];
 const nearTip = pt => { const R = radius(bx); return !(pt.x < bx - R * 2.5 || pt.x > ashStart + R * 2 || Math.abs(pt.y) > R * 3.2); };
 cv.addEventListener("pointerdown", e => {
   initAudio(); if (ac && ac.state === "suspended") ac.resume();
   if (state !== "lit" || pid !== null) return;
   const pt = toFrame(e);
-  if (mode === "finger" && !nearTip(pt)) return;   // Ziehen startet nur an der Glut
+  if (!nearTip(pt)) return;   // Ziehen (bzw. Abaschen) nur an der Glut
   pid = e.pointerId; downAt = performance.now(); downPt = pt; moved = false;
   try { cv.setPointerCapture(pid); } catch (er) {}
   if (mode === "finger") { drawing = true; drawTime = 0; drawFrom = bx; fingerX = bx; }
-  else { swipeX = pt.x; trail.push({ x: e.clientX, y: e.clientY, t: performance.now() }); }
 });
 cv.addEventListener("pointermove", e => {
   if (e.pointerId !== pid) return;
   const pt = toFrame(e);
   if (Math.hypot(pt.x - downPt.x, pt.y - downPt.y) > 8) moved = true;
-  if (mode === "finger") { fingerX = Math.max(burnEnd, Math.min(fingerX, pt.x + radius(bx) * .2)); return; }
-  // Richtung Mundstück (−x) = unempfindlicher, Richtung Glut (+x) = empfindlicher
-  micSens = clamp(micSens + (pt.x - swipeX) / (L * .7) * 100, 0, 100); swipeX = pt.x;
-  trail.push({ x: e.clientX, y: e.clientY, t: performance.now() });
+  if (mode === "finger") fingerX = Math.max(burnEnd, Math.min(fingerX, pt.x + radius(bx) * .2));
 });
 const release = e => {
   if (e.pointerId !== pid) return;
@@ -641,7 +625,7 @@ const release = e => {
   const quick = performance.now() - downAt < 300 && !moved;
   if (mode === "finger") drawing = false;
   if (quick && downPt.x > bx && nearTip(downPt) && ashStart - bx > radius(bx) * .4) { flick(true); return; }
-  if (mode !== "finger") { store.set("micSens", Math.round(micSens)); return; }
+  if (mode !== "finger") return;
   const burnt = drawFrom - bx;
   if (burnt > r1 * .3 || drawTime > .6) { totalDrags++; exhale(clamp(.55 + burnt / (L * .12), .55, 1.3)); }
 };
@@ -660,6 +644,7 @@ document.getElementById("light").onclick = async () => {
     lastAcc = null; knockThr = 6 - $("knockSens").value * .052;   // 0.8 … 6 m/s² Sprung zwischen zwei Messungen
     addEventListener("devicemotion", onMotion);
   }
+  micSens = +$("micSens").value;
   mode = prefMode; knock = prefKnock; status("");
   document.getElementById("start").classList.add("gone");
   state = "lighting"; lightT = 0;
@@ -683,17 +668,19 @@ const store = { get(k, d) { try { const v = localStorage.getItem("joint." + k); 
                 set(k, v) { try { localStorage.setItem("joint." + k, v); } catch (e) {} } };
 let mode = "finger", knock = false;
 let prefMode = store.get("mode", "finger"), prefKnock = store.get("knock", "0") === "1";
-let micSens = +store.get("micSens", 40);      // wird im Spiel per Wischen am Joint verstellt
+let micSens = +store.get("micSens", 40);      // wird beim Anzünden für die Runde festgelegt
+$("micSens").value = micSens;
+$("micSens").oninput = () => store.set("micSens", $("micSens").value);
 $("knockSens").value = store.get("knockSens", 55);
 $("knockSens").oninput = () => store.set("knockSens", $("knockSens").value);
 const status = t => { $("status").textContent = t || ""; };
 function setSeg(a, b, on) { $(a).setAttribute("aria-checked", !on); $(b).setAttribute("aria-checked", on); }
 const HELP = {
   finger: "Handyecke mit dem Filter an die Lippen. Finger auf die Glut legen und am Joint entlang Richtung Mundstück wischen, er brennt so weit ab, wie du ziehst. Loslassen zum Ausatmen. Kurz auf die Asche tippen zum Abaschen.",
-  breath: "Handyecke mit dem Filter an die Lippen. Hörbar Luft einziehen, der Joint brennt, solange du ziehst. Dann reinpusten zum Ausatmen. Wischen am Joint stellt das Mikro ein: Richtung Mundstück unempfindlicher, Richtung Glut empfindlicher.",
+  breath: "Handyecke mit dem Filter an die Lippen. Hörbar Luft einziehen, der Joint brennt, solange du ziehst. Dann reinpusten zum Ausatmen. Kurz auf die Asche tippen zum Abaschen.",
 };
 function showPrefs() {
-  setSeg("modeFinger", "modeBreath", prefMode === "breath");
+  setSeg("modeFinger", "modeBreath", prefMode === "breath"); $("micOpts").hidden = prefMode !== "breath";
   setSeg("knockOff", "knockOn", prefKnock); $("knockOpts").hidden = !prefKnock;
   $("help").textContent = HELP[prefMode];
 }
