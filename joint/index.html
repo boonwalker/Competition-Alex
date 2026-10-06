@@ -31,6 +31,7 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
 .meter { position: relative; height: 8px; border-radius: 4px; background: rgba(255,255,255,.08); overflow: hidden; }
 .meter i { position: absolute; inset: 0 auto 0 0; width: 0; background: var(--ember); }
 .meter b { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--ink); }
+.cue { position: fixed; left: 50%; bottom: calc(env(safe-area-inset-bottom, 0px) + 18px); transform: translateX(-50%); z-index: 2; font: 600 15px var(--body); color: var(--ink); background: rgba(20,18,16,.75); border: 1px solid rgba(255,255,255,.12); border-radius: 999px; padding: 8px 16px; white-space: nowrap; pointer-events: none; }
 .status { margin: 0; font-size: 13px; line-height: 1.4; color: var(--ink); }
 .status:empty { display: none; }
 .ui button { font: 600 13px var(--body); color: var(--ink); background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.14); border-radius: 999px; padding: 8px 14px; cursor: pointer; }
@@ -77,6 +78,8 @@ button:focus-visible { outline: 2px solid var(--ember); outline-offset: 3px; }
     <p class="status" id="status"></p>
   </div>
 </div>
+
+<div class="cue" id="cue" hidden></div>
 
 <div class="overlay" id="start">
   <h1>Handy-Joint</h1>
@@ -296,8 +299,10 @@ function decodeExhale() {
   const raw = exhaleRaw; exhaleRaw = null;
   ac.decodeAudioData(raw, b => exhaleBuf = b, () => {});
 }
-function exhale(strength) {
-  exhaleT = 0; exhaleStrength = strength;
+let exhaleSrc = "file";
+function exhale(strength, src = "file") {
+  exhaleT = 0; exhaleStrength = strength; exhaleSrc = src;
+  if (src === "mic") { analyser = null; return; }     // Menge kommt live vom Pusten
   if (ac && exhaleBuf) {
     const src = ac.createBufferSource(); src.buffer = exhaleBuf;
     analyser = ac.createAnalyser(); analyser.fftSize = 1024; anaBuf = new Float32Array(analyser.fftSize);
@@ -544,7 +549,7 @@ function update(dt, t) {
   // Ausatmen
   if (exhaleT >= 0) {
     exhaleT += dt;
-    const lvl = exhaleLevel() * exhaleStrength;
+    const lvl = (exhaleSrc === "mic" ? micBlow : exhaleLevel()) * exhaleStrength;
     exhaleLvl += (lvl - exhaleLvl) * Math.min(1, dt * 12);
     const n = Math.round(exhaleLvl * 110 * dt + Math.random() * .5);
     for (let i = 0; i < n; i++) {
@@ -554,7 +559,7 @@ function update(dt, t) {
         s: r1 * rand(.5, 1), gs: r1 * rand(1.6, 3.2), a: rand(.06, .12), max: rand(3, 5.5), drag: 1.3, rot: rand(-1, 1), vr: 0,
       });
     }
-    if (exhaleT > exhaleDur + .2) exhaleT = -1;
+    if (exhaleSrc === "file" && exhaleT > exhaleDur + .2) exhaleT = -1;
   }
 
   // Rauch aus der Glut
@@ -593,7 +598,7 @@ function flick(byHand) {
 }
 
 function finish() {
-  state = "out"; drawing = false; pid = null; heat = 0;
+  state = "out"; drawing = false; pid = null; heat = 0; breathState = "idle"; setCue("");
   if (ac) { crackleGain.gain.setTargetAtTime(0, ac.currentTime, .1); hissGain.gain.setTargetAtTime(0, ac.currentTime, .1); }
   document.getElementById("endtxt").textContent = `${totalDrags} ${totalDrags === 1 ? "Zug" : "Züge"}. Nur noch Crutch übrig.`;
   setTimeout(() => document.getElementById("end").classList.remove("gone"), 1400);
@@ -684,37 +689,60 @@ $("modeBreath").onclick = async () => {
   micAna = ac.createAnalyser(); micAna.fftSize = 1024; micAna.smoothingTimeConstant = .5;
   micBins = new Float32Array(micAna.frequencyBinCount);
   src.connect(micAna);
-  micFloor = 1e-7; mode = "breath"; setSeg("modeFinger", "modeBreath", true); $("breathOpts").hidden = false;
-  status("Atem an. Mach ein Ziehgeräusch ins Mikrofon (unten am Handy), der Joint brennt, solange du ziehst. Pause = ausatmen.");
+  micFloor = 1e-7; loFloor = 1e-7; breathState = "idle"; mode = "breath"; setSeg("modeFinger", "modeBreath", true); $("breathOpts").hidden = false;
+  status("Atem an. Zieh hörbar Luft ein, nah am Mikrofon (unten am Handy): Der Joint brennt, solange du ziehst. Dann kurz Luft anhalten und ins Mikro pusten, so kommt der Rauch raus.");
 };
 function stopMic() {
   if (micStream) micStream.getTracks().forEach(t => t.stop());
-  micStream = null; micAna = null; micInt = 0;
+  micStream = null; micAna = null; micInt = 0; micBlow = 0; breathState = "idle"; setCue("");
+  if (exhaleSrc === "mic") exhaleT = -1;
   if (mode === "finger" && pid === null) drawing = false;
 }
+// Atem-Modus: idle -> draw (Luft einsaugen, Joint brennt) -> hold (Luft anhalten) -> blow (reinpusten = Rauch)
+// Pusten erzeugt am Mikro starkes Wind-Rumpeln in den tiefen Frequenzen, Ziehen eher ein helles Zischen.
+let breathState = "idle", micLo = 0, micHi = 0, loFloor = 1e-7, holdStart = 0, micBlow = 0;
+function setCue(t) { $("cue").hidden = !t; $("cue").textContent = t || ""; }
+function bandPower(lo, hi) {
+  const hz = ac.sampleRate / micAna.fftSize; let p = 0;
+  for (let i = Math.max(1, Math.floor(lo / hz)); i < Math.min(micBins.length, Math.floor(hi / hz)); i++) p += Math.pow(10, micBins[i] / 10);
+  return p;
+}
+function track(fl, v, dt) { fl = v < fl ? fl + (v - fl) * Math.min(1, dt * 3) : fl * (1 + dt * .08); return Math.max(fl, 1e-9); }
 function breathStep(dt) {
   if (!micAna) return;
   micAna.getFloatFrequencyData(micBins);
-  const hz = ac.sampleRate / micAna.fftSize;
-  let hi = 0;
-  for (let i = Math.floor(1200 / hz); i < Math.min(micBins.length, Math.floor(9000 / hz)); i++) hi += Math.pow(10, micBins[i] / 10);
-  // Grundrauschen langsam mitführen (nicht während der eigene Ausatem-Sound läuft)
-  const playing = exhaleT >= 0;
-  if (!playing) micFloor = hi < micFloor ? micFloor + (hi - micFloor) * Math.min(1, dt * 3) : micFloor * (1 + dt * .08);
-  micFloor = Math.max(micFloor, 1e-9);
-  micDb = 10 * Math.log10(hi / micFloor);
-  const thr = 22 - $("micSens").value * .17;   // 5 … 22 dB über dem Grundrauschen
-  const raw = playing ? 0 : clamp((micDb - thr) / 14, 0, 1);
-  micInt += (raw - micInt) * Math.min(1, dt * 10);
+  const hi = bandPower(1200, 9000), lo = bandPower(40, 500);
+  const quiet = breathState === "idle" || breathState === "hold";
+  if (quiet) { micFloor = track(micFloor, hi, dt); loFloor = track(loFloor, lo, dt); }
+  micHi = 10 * Math.log10(hi / micFloor); micLo = 10 * Math.log10(lo / loFloor);
+  micDb = Math.max(micHi, micLo);
+  const thr = 22 - $("micSens").value * .17;          // 5 … 22 dB über dem Grundrauschen
+  const blowish = micLo > thr && micLo > micHi + 6;   // tiefes Wind-Rumpeln überwiegt
+  const sig = micDb > thr;
+  const drawRaw = clamp((micHi - thr) / 14, 0, 1);
+  micInt += ((breathState === "draw" ? drawRaw : 0) - micInt) * Math.min(1, dt * 10);
+  const blowRaw = clamp((micDb - thr) / 14, 0, 1.3);
+  micBlow += ((breathState === "blow" ? blowRaw : 0) - micBlow) * Math.min(1, dt * 10);
   $("micMeter").style.width = clamp(micDb / 40, 0, 1) * 100 + "%";
   $("micThr").style.left = clamp(thr / 40, 0, 1) * 100 + "%";
   const now = performance.now();
-  if (micInt > .08) micLastOn = now;
-  if (!drawing && micInt > .12) { drawing = true; drawTime = 0; drawFrom = bx; }
-  else if (drawing && now - micLastOn > 350) {
-    drawing = false;
-    const burnt = drawFrom - bx;
-    if (burnt > r1 * .3 || drawTime > .6) { totalDrags++; exhale(clamp(.55 + burnt / (L * .12), .55, 1.3)); }
+  if (sig) micLastOn = now;
+  const silentFor = now - micLastOn;
+
+  if (breathState === "idle") {
+    if (sig && !blowish && state === "lit") { breathState = "draw"; drawing = true; drawTime = 0; drawFrom = bx; setCue(""); }
+  } else if (breathState === "draw") {
+    if (silentFor > 350) {
+      drawing = false;
+      const burnt = drawFrom - bx;
+      if (burnt > r1 * .2 || drawTime > .5) { totalDrags++; breathState = "hold"; holdStart = now; exhaleStrength = clamp(.6 + burnt / (L * .1), .6, 1.4); setCue("Luft anhalten … und jetzt reinpusten"); }
+      else breathState = "idle";
+    }
+  } else if (breathState === "hold") {
+    if (sig) { breathState = "blow"; exhale(exhaleStrength, "mic"); setCue(""); }
+    else if (now - holdStart > 20000) { breathState = "idle"; setCue(""); }
+  } else if (breathState === "blow") {
+    if (silentFor > 450 || exhaleT > 10) { breathState = "idle"; exhaleT = -1; micBlow = 0; }
   }
 }
 
