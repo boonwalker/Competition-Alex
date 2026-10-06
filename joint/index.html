@@ -473,8 +473,12 @@ function render(t) {
   ctx.save(); ctx.globalCompositeOperation = "lighter";
   for (const s of sparks) {
     const a = 1 - s.life / s.max;
-    ctx.fillStyle = `rgba(255,${150 + 80 * a | 0},60,${a})`;
-    ctx.beginPath(); ctx.arc(s.x, s.y, s.r * a + .3, 0, 7); ctx.fill();
+    const col = `rgba(255,${150 + 80 * a | 0},60,${a})`;
+    // kurzer Leuchtstreifen in Flugrichtung, vorne ein heller Kern
+    ctx.strokeStyle = col; ctx.lineWidth = s.r * a + .4; ctx.lineCap = "round";
+    ctx.beginPath(); ctx.moveTo(s.x - s.vx * .035, s.y - s.vy * .035); ctx.lineTo(s.x, s.y); ctx.stroke();
+    ctx.fillStyle = `rgba(255,240,190,${a})`;
+    ctx.beginPath(); ctx.arc(s.x, s.y, s.r * a * .7 + .3, 0, 7); ctx.fill();
   }
   ctx.restore();
 
@@ -613,13 +617,27 @@ function update(dt, t) {
 
 function flick(byHand) {
   const len = ashStart - bx;
-  if (len < r1 * .4) return;
+  if (len < r1 * .9) {
+    // kaum Asche da: statt abzufallen stieben nur ein paar Funken von der Glut
+    if (byHand) sparkPuff();
+    return;
+  }
   const R = radius(bx), keep = byHand ? 0 : len * rand(0, .3);
   const w = len - keep;
   ashFall.push({ x: bx + keep + w / 2, y: 0, w, h: R * 1.9, vx: -UX * (byHand ? 60 : 0) + rand(-20, 20), vy: -UY * (byHand ? 60 : 0), rot: 0, vr: rand(-2, 2), life: 0 });
   for (let i = 0; i < 16; i++) sparks.push({ x: bx + keep + rand(0, w), y: rand(-R, R) * .7, vx: rand(-40, 40), vy: rand(-30, 40), r: rand(.4, 1.2), life: 0, max: rand(.2, .6) });
   ashStart = bx + keep; ashLimit = rand(2.2, 4);
   buildEmberDots();
+}
+
+function sparkPuff() {
+  const R = radius(bx), tip = Math.max(bx, ashStart);
+  const n = 6 + Math.floor(Math.random() * 6);
+  for (let i = 0; i < n; i++) {
+    const f = rand(-.8, .8);
+    sparks.push({ x: rand(bx, tip) + R * .15, y: f * R, vx: rand(25, 130), vy: f * rand(20, 70) + rand(-25, 25), r: rand(1, 2.2), life: 0, max: rand(.35, .9) });
+  }
+  heat = Math.min(1.2, heat + .3);   // Glut glimmt kurz auf
 }
 
 function finish() {
@@ -654,7 +672,7 @@ const release = e => {
   pid = null;
   const quick = performance.now() - downAt < 300 && !moved;
   if (mode === "finger") drawing = false;
-  if (quick && downPt.x > bx && nearTip(downPt) && ashStart - bx > radius(bx) * .4) { flick(true); return; }
+  if (quick && downPt.x > bx - radius(bx) * .5 && nearTip(downPt)) { flick(true); return; }
   if (mode !== "finger") return;
   const burnt = drawFrom - bx;
   if (burnt > r1 * .3 || drawTime > .6) { totalDrags++; exhale(clamp(.55 + burnt / (L * .12), .55, 1.3)); }
@@ -836,7 +854,7 @@ function onMotion(e) {
     const now = performance.now();
     if (jerk > knockThr && now - lastKnock > 450) {
       lastKnock = now;
-      if (state === "lit" && ashStart - bx > r1 * .3) flick(true);
+      if (state === "lit") flick(true);
     }
   }
   lastAcc = v;
