@@ -81,6 +81,7 @@ button:focus-visible { outline: 2px solid var(--ember); outline-offset: 3px; }
     <div class="row">
       <button id="flip" title="Filter auf die andere Seite">⇄ Filter links/rechts</button>
       <button id="fs" title="Vollbild">⛶ Vollbild</button>
+      <button id="music" aria-pressed="false">♫ Musik: aus</button>
     </div>
     <p class="status" id="status"></p>
   </div>
@@ -96,7 +97,7 @@ button:focus-visible { outline: 2px solid var(--ember); outline-offset: 3px; }
 const cv = document.getElementById("c"), ctx = cv.getContext("2d");
 const rand = (a, b) => a + Math.random() * (b - a);
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
-let W, H, dpr, L, S, r0, r1, x0, fullLen, filterLen, burnStart, burnEnd;
+let bodyPad = 8, W, H, dpr, L, S, r0, r1, x0, fullLen, filterLen, burnStart, burnEnd;
 let body, ashTex, smokeSprites = [], frameM, frameInv, smokeLayer = null, sctx = null;
 let orient = 0;           // 0: Filter unten rechts, 1: Filter unten links
 let UX = 0, UY = -1;      // "oben" auf dem Bildschirm, im Joint-Koordinatensystem
@@ -106,7 +107,19 @@ let ashLimit = 3, smoke = [], sparks = [], ashFall = [], emberDots = [];
 const seeds = [rand(0, 9), rand(0, 9), rand(0, 9)];
 
 // ---------- Geometrie ----------
-function radius(x) { return r0 + (r1 - r0) * clamp((x - x0) / fullLen, 0, 1); }
+function radius(x) {
+  // handgedreht: nicht ganz linear, mit leichtem Bauch hinter der Mitte
+  const u = clamp((x - x0) / fullLen, 0, 1);
+  return r0 + (r1 - r0) * u + r1 * .07 * Math.sin(Math.PI * Math.pow(u, .8));
+}
+// Unregelmäßigkeiten der Ober- und Unterkante (Crutch bleibt glatt, der ist aus Karton)
+function wob(x, sd) {
+  const u = (x - x0) / fullLen, xl = x - x0;
+  const on = clamp((xl - filterLen) / 25, 0, 1);
+  return on * r1 * (.04 * Math.sin(u * 9.1 + sd) + .028 * Math.sin(u * 23.7 + sd * 2.3) + .016 * Math.sin(u * 51 + sd * 1.7));
+}
+const topY = x => -(radius(x) + wob(x, seeds[0]));
+const botY = x => radius(x) + wob(x, seeds[1] + 2);
 
 function resize() {
   dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -118,6 +131,7 @@ function resize() {
   burnStart = x0 + fullLen; burnEnd = x0 + filterLen + L * 0.025;
   if (state === "unlit") { bx = burnStart; ashStart = bx; }
   bx = clamp(bx ?? burnStart, burnEnd, burnStart); ashStart = Math.max(ashStart ?? bx, bx);
+  bodyPad = Math.ceil(r1 * .3) + 4;
   buildBody(); buildAsh(); buildSmoke(); buildEmberDots(); buildFrame();
 }
 
@@ -134,11 +148,12 @@ function buildFrame() {
 // ---------- Papier, Füllung, Crutch (einmal vorgerendert) ----------
 function conePath(c, ox, oy) {
   c.beginPath();
-  c.moveTo(ox, oy - r0); c.lineTo(ox + fullLen, oy - r1);
-  c.lineTo(ox + fullLen, oy + r1); c.lineTo(ox, oy + r0); c.closePath();
+  for (let xl = 0; xl <= fullLen; xl += 3) c.lineTo(ox + xl, oy + topY(x0 + xl));
+  for (let xl = fullLen; xl >= 0; xl -= 3) c.lineTo(ox + xl, oy + botY(x0 + xl));
+  c.closePath();
 }
 function buildBody() {
-  const pad = 4, bw = Math.ceil(fullLen), bh = Math.ceil(r1 * 2 + pad * 2);
+  const pad = bodyPad, bw = Math.ceil(fullLen), bh = Math.ceil(r1 * 2 + pad * 2);
   const oy = bh / 2;
   const mk = () => { const k = document.createElement("canvas"); k.width = bw * dpr; k.height = bh * dpr; const c = k.getContext("2d"); c.scale(dpr, dpr); return [k, c]; };
   // 1) Füllung: Krümel, Blattstücke, Stängel – sitzt unter dem Papier
@@ -225,19 +240,19 @@ function buildBody() {
   }
   // Zylinder-Schattierung, Spalte für Spalte (Kegelform)
   for (let x = 0; x < bw; x += 2) {
-    const r = r0 + (r1 - r0) * (x / fullLen);
-    const rim = c.createLinearGradient(0, oy - r, 0, oy + r);
+    const ty = oy + topY(x0 + x), by = oy + botY(x0 + x), r = (by - ty) / 2, oyc = (ty + by) / 2;
+    const rim = c.createLinearGradient(0, oyc - r, 0, oyc + r);
     rim.addColorStop(0, "rgba(236,228,208,.42)"); rim.addColorStop(.22, "rgba(236,228,208,.06)");
     rim.addColorStop(.5, "rgba(236,228,208,0)"); rim.addColorStop(.8, "rgba(236,228,208,.06)"); rim.addColorStop(1, "rgba(236,228,208,.3)");
-    c.fillStyle = rim; c.fillRect(x, oy - r, 2, r * 2);
-    const g = c.createLinearGradient(0, oy - r, 0, oy + r);
+    c.fillStyle = rim; c.fillRect(x, oyc - r, 2, r * 2);
+    const g = c.createLinearGradient(0, oyc - r, 0, oyc + r);
     g.addColorStop(0, "rgba(30,22,12,.55)");
     g.addColorStop(.14, "rgba(30,22,12,.08)");
     g.addColorStop(.3, "rgba(255,248,230,.22)");
     g.addColorStop(.45, "rgba(255,248,230,0)");
     g.addColorStop(.75, "rgba(25,18,8,.22)");
     g.addColorStop(1, "rgba(10,7,3,.8)");
-    c.fillStyle = g; c.fillRect(x, oy - r, 2, r * 2);
+    c.fillStyle = g; c.fillRect(x, oyc - r, 2, r * 2);
   }
   c.restore();
   // 3) Papierkorn auf Pixelebene
@@ -309,10 +324,12 @@ function edgeOff(f, R) {
   return (0.5 * Math.sin(f * 2.7 + bx * 0.031 + seeds[0]) + 0.35 * Math.sin(f * 6.1 - bx * 0.047 + seeds[1]) + 0.15 * Math.sin(f * 11 + bx * 0.09 + seeds[2])) * R * 0.22;
 }
 function bodyClip(c, R) {
+  // nur die Brandkante begrenzen, die Außenform kommt aus dem vorgerenderten Bild
+  const big = r1 * 1.6;
   c.beginPath();
-  c.moveTo(x0, -r0);
-  for (let i = 0; i <= 20; i++) { const f = -1 + i / 10; c.lineTo(bx + edgeOff(f, R), f * radius(bx)); }
-  c.lineTo(x0, r0); c.closePath();
+  c.moveTo(x0, -big); c.lineTo(bx + edgeOff(-1, R), -big);
+  for (let i = 0; i <= 20; i++) { const f = -1 + i / 10, yt = topY(bx), yb = botY(bx); c.lineTo(bx + edgeOff(f, R), (yt + yb) / 2 + f * (yb - yt) / 2); }
+  c.lineTo(bx + edgeOff(1, R), big); c.lineTo(x0, big); c.closePath();
 }
 
 // ---------- Partikel ----------
@@ -392,6 +409,121 @@ document.addEventListener("pointerdown", () => { if (ac && ac.state !== "running
 document.addEventListener("touchend", () => { if (ac && ac.state !== "running") ensureAudio(); }, true);
 document.addEventListener("visibilitychange", () => { if (!document.hidden && ac && ac.state !== "running") ac.resume().catch(() => {}); });
 
+// ---------- Musik: eigene Reggae-Nummer (One-Drop), live synthetisiert ----------
+// 72 BPM, Achtelraster. Akkorde Am – D – Am – G, Gitarren-Skank auf 2 und 4,
+// Bass setzt nach der Eins ein, Kick + Rimshot auf der Drei, Melodika jede zweite Runde.
+const BPM = 72, STEP = 60 / BPM / 2;
+const N = { E2: 82.41, G2: 98, A2: 110, B2: 123.47, C3: 130.81, D2: 73.42, Fs2: 92.5, D3: 146.83,
+  G3: 196, A3: 220, B3: 246.94, C4: 261.63, D4: 293.66, E4: 329.63, Fs4: 369.99,
+  G4: 392, A4: 440, B4: 493.88, C5: 523.25, D5: 587.33, E5: 659.25, Fs5: 739.99, G5: 783.99, A5: 880 };
+const CHORDS = [[N.A3, N.C4, N.E4], [N.A3, N.D4, N.Fs4], [N.A3, N.C4, N.E4], [N.G3, N.B3, N.D4]];
+const BASS = [
+  [0, 0, N.A2, N.A2, N.C3, 0, N.E2, N.G2],
+  [0, 0, N.D2, N.D2, N.Fs2, 0, N.A2, N.Fs2],
+  [0, 0, N.A2, 0, N.E2, N.G2, N.A2, N.C3],
+  [0, 0, N.G2, N.G2, N.B2, 0, N.D3, N.B2],
+];
+const MELODY = [   // Takte 5–8 der 8-Takt-Runde
+  [N.E5, 0, 0, N.G5, N.A5, 0, N.G5, N.E5],
+  [N.D5, 0, N.E5, 0, N.Fs5, 0, N.E5, 0],
+  [N.C5, 0, N.D5, N.E5, N.A4, 0, 0, 0],
+  [N.G4, 0, N.B4, 0, N.D5, 0, 0, 0],
+];
+let musicOn = store0("music") === "1", mAc = null, mOut = null, mFilter = null, mNext = 0, mStep = 0, mTimer = null;
+function store0(k) { try { return localStorage.getItem("joint." + k); } catch (e) { return null; } }
+const musicQuiet = () => mode === "breath" && !!micStream;   // im Atem-Modus nur dumpf und leise, damit das Mikro sie nicht als Ziehen hört
+function musicBuild() {
+  mAc = ac; mOut = ac.createGain(); mOut.gain.value = 0;
+  mFilter = ac.createBiquadFilter(); mFilter.type = "lowpass"; mFilter.frequency.value = 12000;
+  const comp = ac.createDynamicsCompressor(); comp.threshold.value = -10; comp.ratio.value = 4;   // schützt vor Übersteuern
+  mOut.connect(mFilter).connect(comp).connect(ac.destination);
+  mNext = ac.currentTime + .1;
+}
+function musicStart() {
+  if (!ac) return;
+  if (mAc !== ac) musicBuild();
+  mNext = Math.max(mNext, ac.currentTime + .1);
+  mOut.gain.setTargetAtTime(musicQuiet() ? .35 : .7, ac.currentTime, .3);
+  mFilter.frequency.setTargetAtTime(musicQuiet() ? 800 : 12000, ac.currentTime, .1);
+  if (!mTimer) mTimer = setInterval(musicTick, 25);
+}
+function musicStop() {
+  clearInterval(mTimer); mTimer = null;
+  if (mOut && mAc === ac && ac) mOut.gain.setTargetAtTime(0, ac.currentTime, .15);
+}
+function musicTick() {
+  if (!ac || ac.state !== "running") return;
+  if (mAc !== ac) { musicBuild(); musicStart(); }
+  if (mNext < ac.currentTime - .5) mNext = ac.currentTime + .05;   // nach Pause nicht nachholen
+  while (mNext < ac.currentTime + .25) { musicStep(mStep, mNext); mNext += STEP; mStep++; }
+}
+function env(g, t, peak, a, d) { g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(peak, t + a); g.gain.exponentialRampToValueAtTime(.0001, t + a + d); }
+function musicStep(step, t) {
+  const bar = Math.floor(step / 8) % 8, st = step % 8, ch = bar % 4, quiet = musicQuiet();
+  // Kick + Rimshot auf der Drei (One-Drop)
+  if (st === 4) {
+    const o = ac.createOscillator(), g = ac.createGain();
+    o.frequency.setValueAtTime(120, t); o.frequency.exponentialRampToValueAtTime(42, t + .16);
+    env(g, t, .9, .004, .38); o.connect(g).connect(mOut); o.start(t); o.stop(t + .45);
+    const r = ac.createOscillator(), rg = ac.createGain(); r.type = "triangle"; r.frequency.value = 820;
+    env(rg, t, .22, .001, .06); r.connect(rg).connect(mOut); r.start(t); r.stop(t + .08);
+  }
+  // Hi-Hat auf allen Achteln, leicht geshuffelt (nicht im Atem-Modus, zu hell fürs Mikro)
+  if (!quiet && noiseBuf) {
+    const n = ac.createBufferSource(), hp = ac.createBiquadFilter(), g = ac.createGain();
+    n.buffer = noiseBuf; hp.type = "highpass"; hp.frequency.value = 7000;
+    const tt = t + (st % 2 ? STEP * .12 : 0);
+    env(g, tt, st % 2 ? .09 : .045, .001, .035); n.connect(hp).connect(g).connect(mOut); n.start(tt, Math.random()); n.stop(tt + .06);
+  }
+  // Gitarren-Skank auf 2 und 4: kurzer, heller Akkord-Chop
+  if (st === 2 || st === 6) {
+    for (const f of CHORDS[ch]) for (const det of [-6, 6]) {
+      const o = ac.createOscillator(), bp = ac.createBiquadFilter(), g = ac.createGain();
+      o.type = "sawtooth"; o.frequency.value = f; o.detune.value = det;
+      bp.type = "bandpass"; bp.frequency.value = 1400; bp.Q.value = .8;
+      env(g, t, .05, .004, .12); o.connect(bp).connect(g).connect(mOut); o.start(t); o.stop(t + .2);
+    }
+  }
+  // Orgel-"Bubble" ganz leise auf den Zählzeiten danach
+  if (st === 3 || st === 7) {
+    for (const f of CHORDS[ch]) {
+      const o = ac.createOscillator(), g = ac.createGain(); o.type = "sine"; o.frequency.value = f;
+      env(g, t, .022, .01, .16); o.connect(g).connect(mOut); o.start(t); o.stop(t + .22);
+    }
+  }
+  // Bass
+  const bf = BASS[ch][st];
+  if (bf) {
+    const o = ac.createOscillator(), o2 = ac.createOscillator(), lp = ac.createBiquadFilter(), g = ac.createGain();
+    o.type = "sine"; o.frequency.value = bf; o2.type = "triangle"; o2.frequency.value = bf;
+    lp.type = "lowpass"; lp.frequency.value = 420;
+    g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(.55, t + .015); g.gain.setTargetAtTime(.35, t + .05, .1); g.gain.setTargetAtTime(0, t + STEP * .85, .04);
+    o.connect(lp); o2.connect(lp); lp.connect(g).connect(mOut);
+    o.start(t); o2.start(t); o.stop(t + STEP + .2); o2.stop(t + STEP + .2);
+  }
+  // Melodika in den Takten 5–8
+  if (bar >= 4) {
+    const mf = MELODY[bar - 4][st];
+    if (mf) {
+      const o = ac.createOscillator(), lfo = ac.createOscillator(), lg = ac.createGain(), lp = ac.createBiquadFilter(), g = ac.createGain();
+      o.type = "square"; o.frequency.value = mf; lfo.frequency.value = 5.2; lg.gain.value = mf * .006;
+      lfo.connect(lg).connect(o.frequency);
+      lp.type = "lowpass"; lp.frequency.value = 1700;
+      g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(.045, t + .04); g.gain.setTargetAtTime(0, t + STEP * 1.5, .08);
+      o.connect(lp).connect(g).connect(mOut); o.start(t); lfo.start(t); o.stop(t + STEP * 2.2); lfo.stop(t + STEP * 2.2);
+    }
+  }
+}
+function showMusic() { const b = document.getElementById("music"); b.textContent = musicOn ? "♫ Musik: an" : "♫ Musik: aus"; b.setAttribute("aria-pressed", musicOn); }
+showMusic();
+document.getElementById("music").onclick = () => {
+  ensureAudio(); musicOn = !musicOn;
+  try { localStorage.setItem("joint.music", musicOn ? "1" : "0"); } catch (e) {}
+  showMusic(); musicOn ? musicStart() : musicStop();
+};
+// gespeicherte Einstellung: Musik startet mit der ersten Berührung (vorher darf der Browser nichts abspielen)
+document.addEventListener("pointerdown", () => { if (musicOn && !mTimer) { ensureAudio(); musicStart(); } });
+
 // ---------- Zeichnen ----------
 function drawFlame(x, y, t) {
   const h = r1 * 3.2, w = r1 * .9, fl = 1 + Math.sin(t * 31) * .06 + Math.sin(t * 17) * .05;
@@ -429,8 +561,9 @@ function render(t) {
 
   // Papierkörper
   ctx.save(); bodyClip(ctx, R); ctx.clip();
-  ctx.drawImage(body, x0, -r1 - 4 + 0, fullLen, r1 * 2 + 8);
+  ctx.drawImage(body, x0, -r1 - bodyPad, fullLen, r1 * 2 + bodyPad * 2);
   if (state !== "unlit") {
+    conePath(ctx, x0, 0); ctx.clip();   // nur auf dem Papier, nicht daneben
     // Verkohlung entlang der Glutkante
     const cg = ctx.createLinearGradient(bx - R * 1.6, 0, bx + R * .3, 0);
     cg.addColorStop(0, "rgba(160,120,60,0)"); cg.addColorStop(.45, "rgba(140,95,40,.35)"); cg.addColorStop(.75, "rgba(55,32,18,.85)"); cg.addColorStop(1, "rgba(18,10,6,1)");
@@ -728,6 +861,7 @@ document.getElementById("light").onclick = async () => {
   }
   micSens = +$("micSens").value;
   mode = prefMode; knock = prefKnock; status("");
+  if (musicOn) musicStart();
   document.getElementById("start").classList.add("gone");
   state = "lighting"; lightT = 0;
   try { navigator.wakeLock && navigator.wakeLock.request("screen").catch(() => {}); } catch (e) {}
@@ -736,6 +870,7 @@ document.getElementById("again").onclick = () => {
   document.getElementById("end").classList.add("gone");
   bx = burnStart; ashStart = bx; heat = 0; totalDrags = 0; smoke = []; ashFall = [];
   stopMic(); removeEventListener("devicemotion", onMotion); mode = "finger"; knock = false;
+  if (musicOn) musicStart();
   state = "unlit";
   document.getElementById("start").classList.remove("gone");
 };
@@ -829,7 +964,7 @@ function breathStep(dt) {
   if (breathState === "idle") { micFloor = track(micFloor, hi, dt); loFloor = track(loFloor, lo, dt); totFloor = track(totFloor, tot, dt); }
   micHi = 10 * Math.log10(hi / micFloor); micLo = 10 * Math.log10(lo / loFloor); micTot = 10 * Math.log10(tot / totFloor);
   micDb = Math.max(micHi, micLo, micTot);
-  const sig = micDb > thr;
+  const sig = mTimer ? (micHi > thr || micDb > thr + 15) : micDb > thr;   // Musik ist im Atem-Modus dumpf gefiltert, hohe Frequenzen kommen nur vom Atem
   const now = performance.now();
   const wasSilent = !micPrevSig && now - micLastOn > 120; micPrevSig = sig;
   if (sig) micLastOn = now;
