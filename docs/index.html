@@ -1,0 +1,806 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta charset="utf-8">
+<title>Handy-Joint</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600&family=Rubik:wght@400;600&display=swap">
+<style>
+/* Layout: Vollbild-Canvas, Joint liegt immer auf der langen Achse; UI schwebt minimal in den Ecken */
+:root {
+  --bg: #0b0a09;
+  --ink: #efe7da;
+  --muted: #8f8577;
+  --ember: #ff8a2a;
+  --display: "Fraunces", Georgia, serif;
+  --body: "Rubik", system-ui, sans-serif;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body { background: var(--bg); color: var(--ink); font-family: var(--body); overflow: hidden; -webkit-user-select: none; user-select: none; touch-action: none; -webkit-touch-callout: none; }
+canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+.ui { position: fixed; top: calc(env(safe-area-inset-top, 0px) + 12px); right: 16px; display: flex; gap: 8px; z-index: 3; transition: opacity .6s; }
+.ui.dim { opacity: .15; }
+.ui { flex-direction: column; align-items: flex-end; max-width: calc(100% - 32px); }
+.ui.open { opacity: 1; }
+.menu { width: min(330px, calc(100vw - 32px)); max-height: calc(100vh - 80px); overflow-y: auto; background: rgba(20,18,16,.92); border: 1px solid rgba(255,255,255,.12); border-radius: 18px; padding: 14px; display: flex; flex-direction: column; gap: 14px; -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); }
+.menu .row { display: flex; flex-wrap: wrap; gap: 8px; }
+.menu .group { display: flex; flex-direction: column; gap: 8px; }
+.menu .lbl, .menu label { font-size: 11px; text-transform: uppercase; letter-spacing: .1em; color: var(--muted); }
+.seg { display: flex; gap: 6px; flex-wrap: wrap; }
+.seg button[aria-checked="true"] { background: var(--ember); color: #1a0d04; border-color: var(--ember); }
+.menu input[type=range] { width: 100%; accent-color: var(--ember); }
+.meter { position: relative; height: 8px; border-radius: 4px; background: rgba(255,255,255,.08); overflow: hidden; }
+.meter i { position: absolute; inset: 0 auto 0 0; width: 0; background: var(--ember); }
+.meter b { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--ink); }
+.cue { position: fixed; left: 50%; bottom: calc(env(safe-area-inset-bottom, 0px) + 18px); transform: translateX(-50%); z-index: 2; font: 600 15px var(--body); color: var(--ink); background: rgba(20,18,16,.75); border: 1px solid rgba(255,255,255,.12); border-radius: 999px; padding: 8px 16px; white-space: nowrap; pointer-events: none; }
+.status { margin: 0; font-size: 13px; line-height: 1.4; color: var(--ink); }
+.status:empty { display: none; }
+.ui button { font: 600 13px var(--body); color: var(--ink); background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.14); border-radius: 999px; padding: 8px 14px; cursor: pointer; }
+.overlay { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; text-align: center; padding-inline: 16px; z-index: 2; background: radial-gradient(ellipse at center, rgba(11,10,9,.35), rgba(11,10,9,.85)); transition: opacity .8s; }
+.overlay.gone { opacity: 0; pointer-events: none; }
+.overlay h1 { font-family: var(--display); font-weight: 600; font-size: clamp(30px, 7vw, 56px); margin: 0; line-height: 1; letter-spacing: -.01em; }
+.overlay p { margin: 0; color: var(--muted); max-width: 40ch; line-height: 1.45; font-size: 15px; }
+.go { font: 600 17px var(--body); color: #1a0d04; background: var(--ember); border: 0; border-radius: 999px; padding: 14px 30px; cursor: pointer; box-shadow: 0 0 40px rgba(255,138,42,.45); }
+button:focus-visible { outline: 2px solid var(--ember); outline-offset: 3px; }
+</style>
+</head>
+<body>
+
+<canvas id="c"></canvas>
+
+<div class="ui" id="ui">
+  <button id="menuBtn" aria-expanded="false" aria-controls="menu">☰ Menü</button>
+  <div class="menu" id="menu" hidden>
+    <div class="row">
+      <button id="flip" title="Filter auf die andere Seite">⇄ Seite wechseln</button>
+      <button id="fs" title="Vollbild">⛶ Vollbild</button>
+    </div>
+    <div class="group">
+      <span class="lbl">Ziehen mit</span>
+      <div class="seg" role="radiogroup">
+        <button id="modeFinger" role="radio" aria-checked="true">Finger</button>
+        <button id="modeBreath" role="radio" aria-checked="false">Atem (Mikrofon)</button>
+      </div>
+      <div id="breathOpts" hidden>
+        <label for="micSens">Mikrofon-Empfindlichkeit</label>
+        <input type="range" id="micSens" min="0" max="100" value="55">
+        <div class="meter"><i id="micMeter"></i><b id="micThr"></b></div>
+      </div>
+    </div>
+    <div class="group">
+      <span class="lbl">Abaschen durch Klopfen</span>
+      <div class="seg" role="radiogroup">
+        <button id="knockOff" role="radio" aria-checked="true">Aus</button>
+        <button id="knockOn" role="radio" aria-checked="false">An (Bewegungssensor)</button>
+      </div>
+      <div id="knockOpts" hidden>
+        <label for="knockSens">Klopf-Empfindlichkeit</label>
+        <input type="range" id="knockSens" min="0" max="100" value="55">
+      </div>
+    </div>
+    <p class="status" id="status"></p>
+  </div>
+</div>
+
+<div class="cue" id="cue" hidden></div>
+
+<div class="overlay" id="start">
+  <h1>Handy-Joint</h1>
+  <p>Der Joint liegt diagonal über dem Display. Die Handyecke mit dem Filter (unten rechts) an die Lippen. Zum Ziehen den Finger auf die Glut legen und am Joint entlang Richtung Mundstück wischen. Er brennt so weit ab, wie du ziehst. Loslassen zum Ausatmen. Kurz auf die Asche tippen zum Abaschen. Im Menü kannst du auf Atem-Steuerung per Mikrofon und Abaschen durch Klopfen umstellen.</p>
+  <button class="go" id="light">🔥 Anzünden</button>
+</div>
+
+<div class="overlay gone" id="end">
+  <h1>Aufgeraucht.</h1>
+  <p id="endtxt"></p>
+  <button class="go" id="again">Neuen drehen</button>
+</div>
+
+<script>
+const cv = document.getElementById("c"), ctx = cv.getContext("2d");
+const rand = (a, b) => a + Math.random() * (b - a);
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+let W, H, dpr, L, S, r0, r1, x0, fullLen, filterLen, burnStart, burnEnd;
+let body, ashTex, smokeSprites = [], frameM, frameInv;
+let orient = 0;           // 0: Filter unten rechts, 1: Filter unten links
+let UX = 0, UY = -1;      // "oben" auf dem Bildschirm, im Joint-Koordinatensystem
+let state = "unlit";      // unlit | lighting | lit | out
+let bx, ashStart, heat = 0, drawing = false, drawStart = 0, drawTime = 0, totalDrags = 0, haze = 0, lightT = 0;
+let ashLimit = 3, smoke = [], sparks = [], ashFall = [], emberDots = [];
+const seeds = [rand(0, 9), rand(0, 9), rand(0, 9)];
+
+// ---------- Geometrie ----------
+function radius(x) { return r0 + (r1 - r0) * clamp((x - x0) / fullLen, 0, 1); }
+
+function resize() {
+  dpr = Math.min(window.devicePixelRatio || 1, 2);
+  W = innerWidth; H = innerHeight;
+  cv.width = W * dpr; cv.height = H * dpr;
+  L = Math.hypot(W, H); S = Math.min(W, H);
+  r1 = Math.min(S * 0.085, L * 0.042); r0 = r1 * 0.74;
+  x0 = -L / 2 - 6; fullLen = L * 0.9; filterLen = fullLen * 0.16;
+  burnStart = x0 + fullLen; burnEnd = x0 + filterLen + L * 0.025;
+  if (state === "unlit") { bx = burnStart; ashStart = bx; }
+  bx = clamp(bx ?? burnStart, burnEnd, burnStart); ashStart = Math.max(ashStart ?? bx, bx);
+  buildBody(); buildAsh(); buildSmoke(); buildEmberDots(); buildFrame();
+}
+
+function buildFrame() {
+  // Joint-Achse = Bildschirmdiagonale, vom Filter-Eck unten zur gegenüberliegenden oberen Ecke
+  const dx = orient ? W : -W, dy = -H, th = Math.atan2(dy, dx);
+  frameM = new DOMMatrix().translate(W / 2, H / 2).rotate(th * 180 / Math.PI);
+  if (-Math.cos(th) > 0) frameM = frameM.scale(1, -1);   // Oberseite des Joints zeigt nach oben
+  frameInv = frameM.inverse();
+  const a = frameInv.transformPoint(new DOMPoint(W / 2, H / 2)), b = frameInv.transformPoint(new DOMPoint(W / 2, H / 2 - 1));
+  UX = b.x - a.x; UY = b.y - a.y;
+}
+
+// ---------- Papier, Füllung, Crutch (einmal vorgerendert) ----------
+function conePath(c, ox, oy) {
+  c.beginPath();
+  c.moveTo(ox, oy - r0); c.lineTo(ox + fullLen, oy - r1);
+  c.lineTo(ox + fullLen, oy + r1); c.lineTo(ox, oy + r0); c.closePath();
+}
+function buildBody() {
+  const pad = 4, bw = Math.ceil(fullLen), bh = Math.ceil(r1 * 2 + pad * 2);
+  const oy = bh / 2;
+  const mk = () => { const k = document.createElement("canvas"); k.width = bw * dpr; k.height = bh * dpr; const c = k.getContext("2d"); c.scale(dpr, dpr); return [k, c]; };
+  // 1) Füllung: Krümel, Blattstücke, Stängel – sitzt unter dem Papier
+  const [fk, f] = mk();
+  f.fillStyle = "#6a5636"; f.fillRect(0, 0, bw, bh);
+  const dens = x => .55 + .45 * (Math.sin(x * .021 + seeds[0]) * .5 + Math.sin(x * .053 + seeds[1]) * .3 + Math.sin(x * .11) * .2);
+  const crumb = ["#2e2414", "#6d5733", "#a08a58", "#4a4d29", "#1f1b10", "#b39d6a", "#5e5a2f", "#7a5e34", "#c2ae7e"];
+  for (let i = 0; i < bw * bh * .9; i++) {
+    const x = rand(filterLen, bw), y = rand(0, bh);
+    if (Math.random() > dens(x) + .25) continue;
+    f.fillStyle = crumb[(Math.random() * crumb.length) | 0];
+    f.globalAlpha = rand(.55, 1);
+    f.save(); f.translate(x, y); f.rotate(rand(0, 3.14));
+    f.fillRect(-rand(.4, 1.6), -rand(.3, 1), rand(.8, 3.2), rand(.6, 2));
+    f.restore();
+  }
+  f.globalAlpha = 1; f.lineCap = "round";
+  for (let i = 0; i < bw * .25; i++) {
+    const x = rand(filterLen, bw), y = rand(0, bh), a = rand(-.5, .5), len = rand(3, 12);
+    f.strokeStyle = Math.random() < .6 ? "rgba(168,148,98,.8)" : "rgba(40,32,18,.8)"; f.lineWidth = rand(.5, 1.2);
+    f.beginPath(); f.moveTo(x, y); f.lineTo(x + Math.cos(a) * len, y + Math.sin(a) * len); f.stroke();
+  }
+  // Crutch: aufgerollter Karton statt Füllung
+  f.fillStyle = "#cdbd98"; f.fillRect(0, 0, filterLen, bh);
+  f.strokeStyle = "rgba(120,98,66,.55)"; f.lineWidth = 1.3;
+  for (let k = 0; k < 3; k++) {
+    f.beginPath(); const x = filterLen * (0.25 + k * 0.25);
+    for (let j = 0; j <= 6; j++) f.lineTo(x + (j % 2 ? 6 : -6), oy - r0 + (j / 6) * r0 * 2);
+    f.stroke();
+  }
+
+  body = mk()[0];
+  const c = body.getContext("2d"); c.setTransform(dpr, 0, 0, dpr, 0, 0);
+  c.save(); conePath(c, 0, oy); c.clip();
+  // Papier liegt leicht diffus über der Füllung
+  try { c.filter = "blur(0.35px)"; } catch (e) {}
+  c.drawImage(fk, 0, 0, bw, bh);
+  c.filter = "none";
+  // 2) Dünnes Zigarettenpapier: halbtransparent, warm-grau
+  c.fillStyle = "rgba(238,229,208,.46)"; c.fillRect(0, 0, bw, bh);
+  c.fillStyle = "rgba(240,232,214,.45)"; c.fillRect(0, 0, filterLen, bh);
+  // Wasserzeichen-Linien quer zum Papier
+  c.strokeStyle = "rgba(255,250,235,.07)"; c.lineWidth = 1;
+  for (let x = 2; x < bw; x += 5.5) { c.beginPath(); c.moveTo(x, 0); c.lineTo(x + 1, bh); c.stroke(); }
+  // Doppellage an der Klebenaht
+  const sy = oy - r1 * .38;
+  c.fillStyle = "rgba(220,208,178,.28)"; c.beginPath(); c.moveTo(0, oy - r0 * .38); c.lineTo(bw, sy); c.lineTo(bw, sy + r1 * .22); c.lineTo(0, oy - r0 * .38 + r0 * .22); c.fill();
+  c.strokeStyle = "rgba(120,100,70,.35)"; c.lineWidth = .8;
+  c.beginPath(); c.moveTo(0, oy - r0 * .38); c.lineTo(bw, sy); c.stroke();
+  // Knitterfalten
+  for (let i = 0; i < 45; i++) {
+    const x = rand(filterLen, bw), y = oy + rand(-.8, .8) * r1, len = rand(5, 18), a = rand(-1.1, 1.1);
+    c.lineWidth = rand(.5, 1);
+    c.strokeStyle = "rgba(255,248,230,.16)";
+    c.beginPath(); c.moveTo(x, y); c.lineTo(x + Math.cos(a) * len, y + Math.sin(a) * len); c.stroke();
+    c.strokeStyle = "rgba(40,30,15,.12)";
+    c.beginPath(); c.moveTo(x + .8, y + 1); c.lineTo(x + .8 + Math.cos(a) * len, y + 1 + Math.sin(a) * len); c.stroke();
+  }
+  // Zylinder-Schattierung, Spalte für Spalte (Kegelform)
+  for (let x = 0; x < bw; x += 2) {
+    const r = r0 + (r1 - r0) * (x / fullLen);
+    const g = c.createLinearGradient(0, oy - r, 0, oy + r);
+    g.addColorStop(0, "rgba(30,22,12,.55)");
+    g.addColorStop(.14, "rgba(30,22,12,.08)");
+    g.addColorStop(.3, "rgba(255,248,230,.22)");
+    g.addColorStop(.45, "rgba(255,248,230,0)");
+    g.addColorStop(.75, "rgba(25,18,8,.22)");
+    g.addColorStop(1, "rgba(10,7,3,.8)");
+    c.fillStyle = g; c.fillRect(x, oy - r, 2, r * 2);
+  }
+  c.restore();
+  // 3) Papierkorn auf Pixelebene
+  const id = c.getImageData(0, 0, body.width, body.height), d = id.data;
+  for (let i = 0; i < d.length; i += 4) {
+    if (!d[i + 3]) continue;
+    const n = (Math.random() - .5) * 14;
+    d[i] += n; d[i + 1] += n; d[i + 2] += n;
+  }
+  c.putImageData(id, 0, 0);
+}
+
+function buildAsh() {
+  const w = Math.ceil(r1 * 10), h = Math.ceil(r1 * 2.2);
+  ashTex = document.createElement("canvas"); ashTex.width = w; ashTex.height = h;
+  const c = ashTex.getContext("2d");
+  c.fillStyle = "#8c867e"; c.fillRect(0, 0, w, h);
+  for (let i = 0; i < 2500; i++) {
+    const v = Math.floor(rand(60, 190));
+    c.fillStyle = `rgba(${v},${v - 4},${v - 10},${rand(.15, .5)})`;
+    c.fillRect(rand(0, w), rand(0, h), rand(1, 4), rand(1, 3));
+  }
+  // Risse und Ringe der Asche
+  c.lineCap = "round";
+  for (let i = 0; i < 60; i++) {
+    c.strokeStyle = `rgba(30,28,26,${rand(.3, .7)})`; c.lineWidth = rand(.6, 1.8);
+    let x = rand(0, w), y = rand(0, h);
+    c.beginPath(); c.moveTo(x, y);
+    for (let j = 0; j < 5; j++) { x += rand(-6, 6); y += rand(-10, 10); c.lineTo(x, y); }
+    c.stroke();
+  }
+  for (let x = 0; x < w; x += rand(6, 18)) {
+    c.strokeStyle = `rgba(35,32,30,${rand(.2, .45)})`; c.lineWidth = rand(.8, 2);
+    c.beginPath(); c.moveTo(x, 0); c.bezierCurveTo(x + rand(-5, 5), h * .3, x + rand(-5, 5), h * .7, x + rand(-4, 4), h); c.stroke();
+  }
+}
+
+function buildSmoke() {
+  // Vier Varianten: Value-Noise (mehrere Oktaven) × weicher radialer Abfall
+  smokeSprites = [];
+  const N = 96;
+  for (let v = 0; v < 4; v++) {
+    const k = document.createElement("canvas"); k.width = k.height = N;
+    const c = k.getContext("2d"), img = c.createImageData(N, N), d = img.data;
+    const oct = [8, 16, 32].map(g => { const a = []; for (let i = 0; i < (g + 1) * (g + 1); i++) a.push(Math.random()); return { g, a }; });
+    const sm = x => x * x * (3 - 2 * x);
+    const vn = (o, x, y) => { const gx = x * o.g, gy = y * o.g, ix = Math.floor(gx), iy = Math.floor(gy), fx = sm(gx - ix), fy = sm(gy - iy), w = o.g + 1;
+      const A = o.a[iy * w + ix], B = o.a[iy * w + ix + 1], C = o.a[(iy + 1) * w + ix], D = o.a[(iy + 1) * w + ix + 1];
+      return A + (B - A) * fx + (C - A) * fy + (A - B - C + D) * fx * fy; };
+    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+      const u = x / N, w = y / N, dx = u - .5, dy = w - .5, r = Math.sqrt(dx * dx + dy * dy) * 2;
+      const fall = Math.max(0, 1 - r); 
+      const n = vn(oct[0], u, w) * .55 + vn(oct[1], u, w) * .3 + vn(oct[2], u, w) * .15;
+      const a = Math.pow(fall, 1.6) * Math.pow(Math.max(0, n - .25) / .75, 1.4);
+      const i = (y * N + x) * 4;
+      d[i] = 200; d[i + 1] = 207; d[i + 2] = 218; d[i + 3] = a * 255;
+    }
+    c.putImageData(img, 0, 0); smokeSprites.push(k);
+  }
+}
+
+function buildEmberDots() {
+  emberDots = Array.from({ length: 26 }, () => ({ d: Math.pow(Math.random(), 1.6), f: rand(-.9, .9), ph: rand(0, 6), s: rand(.6, 1.4) }));
+}
+
+// ---------- Brandkante ----------
+function edgeOff(f, R) {
+  return (0.5 * Math.sin(f * 2.7 + bx * 0.031 + seeds[0]) + 0.35 * Math.sin(f * 6.1 - bx * 0.047 + seeds[1]) + 0.15 * Math.sin(f * 11 + bx * 0.09 + seeds[2])) * R * 0.22;
+}
+function bodyClip(c, R) {
+  c.beginPath();
+  c.moveTo(x0, -r0);
+  for (let i = 0; i <= 20; i++) { const f = -1 + i / 10; c.lineTo(bx + edgeOff(f, R), f * radius(bx)); }
+  c.lineTo(x0, r0); c.closePath();
+}
+
+// ---------- Partikel ----------
+function emitSmoke(x, y, o) {
+  if (smoke.length > 1100) return;
+  const v = rand(26, 40), sd = rand(-3, 3);
+  smoke.push(Object.assign({ x, y, vx: UX * v - UY * sd, vy: UY * v + UX * sd, s: r1 * rand(.14, .22), gs: r1 * rand(.45, .9), a: rand(.1, .2), life: 0, max: rand(3.5, 6.5), rot: rand(0, 6), vr: rand(-.4, .4), ph: rand(0, 6), sx: 1, v: (Math.random() * 4) | 0 }, o || {}));
+}
+// Ausatmen: Rauch kommt aus dem Mund (Filter-Ecke), Menge folgt der Lautstärke der Aufnahme
+let exhaleT = -1, exhaleLvl = 0, analyser, anaBuf, exhaleBuf = null, exhaleRaw = null;
+fetch("ausatmung.mp3").then(r => r.ok ? r.arrayBuffer() : null).then(b => { exhaleRaw = b; decodeExhale(); }).catch(() => {});
+function decodeExhale() {
+  if (!ac || !exhaleRaw || exhaleBuf) return;
+  const raw = exhaleRaw; exhaleRaw = null;
+  ac.decodeAudioData(raw, b => exhaleBuf = b, () => {});
+}
+let exhaleSrc = "file";
+function exhale(strength, src = "file") {
+  exhaleT = 0; exhaleStrength = strength; exhaleSrc = src;
+  if (src === "mic") { analyser = null; return; }     // Menge kommt live vom Pusten
+  if (ac && exhaleBuf) {
+    const src = ac.createBufferSource(); src.buffer = exhaleBuf;
+    analyser = ac.createAnalyser(); analyser.fftSize = 1024; anaBuf = new Float32Array(analyser.fftSize);
+    src.connect(analyser); analyser.connect(ac.destination); src.start();
+    exhaleDur = exhaleBuf.duration;
+    src.onended = () => { analyser = null; };
+  } else { analyser = null; exhaleDur = 2.9; }
+}
+let exhaleStrength = 1, exhaleDur = 2.9;
+function exhaleLevel() {
+  if (analyser) {
+    analyser.getFloatTimeDomainData(anaBuf);
+    let sum = 0; for (let i = 0; i < anaBuf.length; i++) sum += anaBuf[i] * anaBuf[i];
+    return clamp(Math.sqrt(sum / anaBuf.length) * 9, 0, 1.4);
+  }
+  // ohne Ton: Hüllkurve wie in der Aufnahme (Stille, Ausatmen, ausklingen)
+  const t = exhaleT; if (t < .37 || t > 2.45) return 0;
+  return Math.sin(Math.PI * (t - .37) / 2.08) * .9;
+}
+
+// ---------- Sound ----------
+let ac, crackleGain, hissGain, noiseBuf;
+function initAudio() {
+  if (ac) return;
+  try {
+    ac = new (window.AudioContext || window.webkitAudioContext)();
+    noiseBuf = ac.createBuffer(1, ac.sampleRate * 2, ac.sampleRate);
+    const d = noiseBuf.getChannelData(0);
+    for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+    // Knistern: seltene Klicks
+    const cb = ac.createBuffer(1, ac.sampleRate * 2, ac.sampleRate), cd = cb.getChannelData(0);
+    for (let i = 0; i < cd.length; i++) if (Math.random() < .0009) { const amp = rand(.3, 1); for (let j = 0; j < 60 && i + j < cd.length; j++) cd[i + j] += (Math.random() * 2 - 1) * amp * Math.exp(-j / 9); }
+    const cs = ac.createBufferSource(); cs.buffer = cb; cs.loop = true;
+    const hp = ac.createBiquadFilter(); hp.type = "highpass"; hp.frequency.value = 1800;
+    crackleGain = ac.createGain(); crackleGain.gain.value = 0;
+    cs.connect(hp).connect(crackleGain).connect(ac.destination); cs.start();
+    // Ziehgeräusch: gefiltertes Rauschen
+    const ns = ac.createBufferSource(); ns.buffer = noiseBuf; ns.loop = true;
+    const bp = ac.createBiquadFilter(); bp.type = "bandpass"; bp.frequency.value = 900; bp.Q.value = .7;
+    hissGain = ac.createGain(); hissGain.gain.value = 0;
+    decodeExhale();
+    ns.connect(bp).connect(hissGain).connect(ac.destination); ns.start();
+  } catch (e) { ac = null; }
+}
+// ---------- Zeichnen ----------
+function drawFlame(x, y, t) {
+  const h = r1 * 3.2, w = r1 * .9, fl = 1 + Math.sin(t * 31) * .06 + Math.sin(t * 17) * .05;
+  ctx.save(); ctx.globalCompositeOperation = "lighter";
+  ctx.translate(x, y); ctx.rotate(Math.atan2(UY, UX) + Math.PI / 2); ctx.scale(1, fl);
+  const g = ctx.createRadialGradient(0, -h * .25, 0, 0, -h * .2, h * .7);
+  g.addColorStop(0, "rgba(255,250,220,.95)"); g.addColorStop(.35, "rgba(255,190,70,.75)"); g.addColorStop(.7, "rgba(255,100,20,.25)"); g.addColorStop(1, "rgba(255,60,0,0)");
+  ctx.fillStyle = g;
+  ctx.beginPath(); ctx.moveTo(0, -h + Math.sin(t * 23) * w * .3);
+  ctx.bezierCurveTo(w, -h * .4, w * .8, 0, 0, h * .05); ctx.bezierCurveTo(-w * .8, 0, -w, -h * .4, 0, -h + Math.sin(t * 23) * w * .3); ctx.fill();
+  const b = ctx.createRadialGradient(0, 0, 0, 0, 0, w * .7);
+  b.addColorStop(0, "rgba(80,130,255,.7)"); b.addColorStop(1, "rgba(80,130,255,0)");
+  ctx.fillStyle = b; ctx.fillRect(-w, -w, w * 2, w * 2);
+  ctx.restore();
+}
+
+function render(t) {
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  // Hintergrund: dunkles Zimmer, leichte Vignette
+  const bg = ctx.createRadialGradient(W / 2, H / 2, 0, W / 2, H / 2, L * .7);
+  bg.addColorStop(0, "#1a1714"); bg.addColorStop(1, "#060505");
+  ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
+
+  ctx.setTransform(new DOMMatrix([dpr, 0, 0, dpr, 0, 0]).multiply(frameM));
+  if (haze > .02) ctx.rotate(Math.sin(t * .6) * haze * .012);
+  const R = radius(bx), lit = state === "lit" || state === "lighting";
+
+  // Schein auf der Unterlage / Umgebung
+  if (lit) {
+    const ga = .05 + heat * .22;
+    const halo = ctx.createRadialGradient(bx, 0, 0, bx, 0, R * 7);
+    halo.addColorStop(0, `rgba(255,120,35,${ga})`); halo.addColorStop(1, "rgba(255,90,20,0)");
+    ctx.save(); ctx.globalCompositeOperation = "lighter"; ctx.fillStyle = halo; ctx.fillRect(bx - R * 7, -R * 7, R * 14, R * 14); ctx.restore();
+  }
+
+  // Papierkörper
+  ctx.save(); bodyClip(ctx, R); ctx.clip();
+  ctx.drawImage(body, x0, -r1 - 4 + 0, fullLen, r1 * 2 + 8);
+  if (state !== "unlit") {
+    // Verkohlung entlang der Glutkante
+    const cg = ctx.createLinearGradient(bx - R * 1.6, 0, bx + R * .3, 0);
+    cg.addColorStop(0, "rgba(160,120,60,0)"); cg.addColorStop(.45, "rgba(140,95,40,.35)"); cg.addColorStop(.75, "rgba(55,32,18,.85)"); cg.addColorStop(1, "rgba(18,10,6,1)");
+    ctx.fillStyle = cg; ctx.fillRect(bx - R * 1.6, -R * 1.2, R * 2, R * 2.4);
+  }
+  ctx.restore();
+
+  // Gedrehtes Ende (unangezündet / beim Anzünden)
+  if (state === "unlit" || (state === "lighting" && lightT < .6)) {
+    const k = state === "unlit" ? 1 : 1 - lightT / .6;
+    ctx.save();
+    ctx.beginPath(); ctx.moveTo(burnStart - 1, -r1); ctx.quadraticCurveTo(burnStart + r1 * .6 * k, -r1 * .3, burnStart + r1 * 1.3 * k, -r1 * .05);
+    ctx.lineTo(burnStart + r1 * 1.3 * k, r1 * .1); ctx.quadraticCurveTo(burnStart + r1 * .5 * k, r1 * .5, burnStart - 1, r1); ctx.closePath();
+    const tg = ctx.createLinearGradient(0, -r1, 0, r1);
+    tg.addColorStop(0, "#6f6656"); tg.addColorStop(.3, "#d9cfb9"); tg.addColorStop(1, "#3a3328");
+    ctx.fillStyle = state === "lighting" ? `rgba(60,35,20,${1 - k * .4})` : tg; ctx.fill();
+    ctx.strokeStyle = "rgba(80,60,40,.35)"; ctx.lineWidth = 1;
+    for (let i = 1; i < 4; i++) { ctx.beginPath(); ctx.moveTo(burnStart, -r1 + i * r1 * .5); ctx.quadraticCurveTo(burnStart + r1 * .5 * k, -r1 * .2 + i * .1 * r1, burnStart + r1 * 1.2 * k, 0); ctx.stroke(); }
+    ctx.restore();
+  }
+
+  // Asche
+  const ashLen = ashStart - bx;
+  if (ashLen > 1) {
+    ctx.save();
+    ctx.beginPath();
+    const aR = R * .96, tip = ashStart;
+    ctx.moveTo(bx - 1, -aR);
+    for (let x = bx; x <= tip - aR * .4; x += 6) ctx.lineTo(x, -aR + Math.sin(x * .3 + seeds[0]) * R * .03);
+    ctx.bezierCurveTo(tip + aR * .1, -aR * .9, tip + aR * .2, aR * .7, tip - aR * .4, aR * .95);
+    for (let x = tip - aR * .4; x >= bx; x -= 6) ctx.lineTo(x, aR + Math.sin(x * .27 + seeds[1]) * R * .03);
+    ctx.closePath(); ctx.clip();
+    const pat = ctx.createPattern(ashTex, "repeat");
+    pat.setTransform(new DOMMatrix().translate(tip + aR * .3, -ashTex.height / 2));
+    ctx.fillStyle = pat; ctx.fillRect(bx - 2, -aR - 2, ashLen + aR * 2, aR * 2 + 4);
+    const ag = ctx.createLinearGradient(0, -aR, 0, aR);
+    ag.addColorStop(0, "rgba(255,255,255,.12)"); ag.addColorStop(.25, "rgba(255,255,255,.22)"); ag.addColorStop(.6, "rgba(0,0,0,.1)"); ag.addColorStop(1, "rgba(0,0,0,.7)");
+    ctx.fillStyle = ag; ctx.fillRect(bx - 2, -aR, ashLen + aR, aR * 2);
+    // dunkler Ring direkt an der Glut
+    const dg = ctx.createLinearGradient(bx, 0, bx + R * .9, 0);
+    dg.addColorStop(0, "rgba(15,10,8,.95)"); dg.addColorStop(1, "rgba(15,10,8,0)");
+    ctx.fillStyle = dg; ctx.fillRect(bx - 2, -aR, R, aR * 2);
+    ctx.restore();
+  }
+
+  // Glut
+  if (lit) {
+    const I = clamp((state === "lighting" ? lightT * .9 : .32) + heat * .85, 0, 1.2);
+    ctx.save(); ctx.globalCompositeOperation = "lighter";
+    for (let i = 0; i <= 12; i++) {
+      const f = -1 + i / 6, fl = .75 + .25 * Math.sin(t * (7 + i) + i * 2.1) + .15 * Math.sin(t * 23 + i);
+      const x = bx + edgeOff(f, R) + R * .08, y = f * R * .9, rr = R * (.32 + .22 * heat) * fl;
+      const a = I * fl * (1 - Math.abs(f) * .35);
+      const g = ctx.createRadialGradient(x, y, 0, x, y, rr);
+      g.addColorStop(0, `rgba(255,236,170,${a * .9})`); g.addColorStop(.3, `rgba(255,140,35,${a * .7})`); g.addColorStop(.7, `rgba(210,45,10,${a * .3})`); g.addColorStop(1, "rgba(120,0,0,0)");
+      ctx.fillStyle = g; ctx.fillRect(x - rr, y - rr, rr * 2, rr * 2);
+    }
+    // Glutnester in der Asche
+    for (const e of emberDots) {
+      const x = bx + e.d * Math.min(ashLen, R * 1.8), y = e.f * R * .85;
+      const a = I * (1 - e.d) * (.4 + .6 * Math.max(0, Math.sin(t * 3 * e.s + e.ph)));
+      const rr = R * .12 * e.s;
+      const g = ctx.createRadialGradient(x, y, 0, x, y, rr);
+      g.addColorStop(0, `rgba(255,190,90,${a})`); g.addColorStop(1, "rgba(255,60,0,0)");
+      ctx.fillStyle = g; ctx.fillRect(x - rr, y - rr, rr * 2, rr * 2);
+    }
+    ctx.restore();
+  }
+
+  // Funken
+  ctx.save(); ctx.globalCompositeOperation = "lighter";
+  for (const s of sparks) {
+    const a = 1 - s.life / s.max;
+    ctx.fillStyle = `rgba(255,${150 + 80 * a | 0},60,${a})`;
+    ctx.beginPath(); ctx.arc(s.x, s.y, s.r * a + .3, 0, 7); ctx.fill();
+  }
+  ctx.restore();
+
+  // fallende Asche
+  for (const p of ashFall) {
+    ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.rot); ctx.globalAlpha = clamp(1 - p.life / 1.6, 0, 1);
+    const hw = p.w / 2, hh = p.h / 2;
+    ctx.beginPath();
+    if (ctx.roundRect) ctx.roundRect(-hw, -hh, p.w, p.h, [hh * .35, hh * .9, hh * .9, hh * .35]); else ctx.rect(-hw, -hh, p.w, p.h);
+    ctx.clip();
+    ctx.drawImage(ashTex, 0, 0, Math.min(p.w, ashTex.width), ashTex.height, -hw, -hh, p.w, p.h);
+    const fg = ctx.createLinearGradient(0, -hh, 0, hh);
+    fg.addColorStop(0, "rgba(0,0,0,.35)"); fg.addColorStop(.3, "rgba(255,255,255,.18)"); fg.addColorStop(.55, "rgba(0,0,0,0)"); fg.addColorStop(1, "rgba(0,0,0,.75)");
+    ctx.fillStyle = fg; ctx.fillRect(-hw, -hh, p.w, p.h);
+    ctx.restore();
+  }
+
+  // Hinweis, solange noch keiner gezogen hat
+  if (state === "lit" && !drawing && totalDrags < 2) {
+    const ph = (t * .55) % 1, hx = bx - ph * L * .3, R2 = radius(hx);
+    ctx.save(); ctx.globalCompositeOperation = "lighter";
+    const ha = Math.sin(Math.PI * ph) * .5;
+    const hg = ctx.createRadialGradient(hx, 0, 0, hx, 0, R2 * 1.1);
+    hg.addColorStop(0, `rgba(255,235,200,${ha})`); hg.addColorStop(1, "rgba(255,200,150,0)");
+    ctx.fillStyle = hg; ctx.fillRect(hx - R2 * 1.2, -R2 * 1.2, R2 * 2.4, R2 * 2.4);
+    ctx.strokeStyle = `rgba(255,220,180,${.25 + .2 * Math.sin(t * 4)})`; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(bx + R2 * .3, 0, R2 * (1.8 + .2 * Math.sin(t * 4)), 0, 7); ctx.stroke();
+    ctx.restore();
+  }
+
+  // Feuerzeug
+  if (state === "lighting" && lightT < 1.1) drawFlame(burnStart + r1 * .4 - UX * r1 * 2.9, -UY * r1 * 2.9, t);
+
+  // Rauch
+  ctx.save(); ctx.globalCompositeOperation = "screen";
+  const base = new DOMMatrix([dpr, 0, 0, dpr, 0, 0]).multiply(frameM);
+  for (const p of smoke) {
+    const k = p.life / p.max, a = p.a * Math.min(1, k * 8) * Math.pow(1 - k, 1.3);
+    if (a <= .003) continue;
+    const s = p.s + p.gs * Math.sqrt(k) * 3;
+    // frischer Rauch ist ein dünner, gestreckter Faden, später wird er wolkig
+    const sp = Math.hypot(p.vx, p.vy), st = 1 + Math.min(2.2, sp / 30) * (1 - k);
+    ctx.setTransform(base); ctx.globalAlpha = a;
+    ctx.translate(p.x, p.y); ctx.rotate(Math.atan2(p.vy, p.vx) + p.rot * k);
+    ctx.scale(st, 1 / Math.sqrt(st));
+    ctx.drawImage(smokeSprites[p.v], -s, -s, s * 2, s * 2);
+  }
+  ctx.restore();
+  ctx.setTransform(base);
+
+  // Dunst nach ein paar Zügen
+  if (haze > .01) {
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.fillStyle = `rgba(190,195,205,${Math.min(.22, haze * .2)})`; ctx.fillRect(0, 0, W, H);
+  }
+}
+
+// ---------- Simulation ----------
+function update(dt, t) {
+  const R = radius(bx);
+  if (state === "lighting") {
+    lightT += dt;
+    heat = clamp(lightT * .5, 0, .6);
+    if (lightT > .4 && bx > burnStart - R * .4) bx -= dt * R * .5;
+    if (lightT > 1.4) state = "lit";
+  }
+  if (state === "lit") {
+    if (mode === "breath") breathStep(dt);
+    const hTarget = !drawing ? 0 : mode === "breath" ? .6 + micInt * .5 : (bx - fingerX > 2 ? 1.1 : .75);
+    heat += (hTarget - heat) * dt * (drawing ? 3 : 1.3);
+    const span = burnStart - burnEnd;
+    bx -= span * dt * 0.0018;                       // glimmt von selbst ganz langsam
+    if (drawing && mode === "finger" && fingerX < bx) bx += (fingerX - bx) * Math.min(1, dt * 7);  // brennt bis zum Finger
+    if (drawing && mode === "breath") bx -= span * dt * .05 * micInt;                          // brennt, solange Luft gezogen wird
+    if (drawing) { drawTime += dt; haze = Math.min(1.2, haze + dt * .035); }
+    if (bx <= burnEnd) { bx = burnEnd; finish(); }
+    // Asche bricht irgendwann von selbst ab
+    if (ashStart - bx > R * ashLimit) flick(false);
+    if (ac) {
+      crackleGain.gain.setTargetAtTime(drawing ? (mode === "breath" ? .2 : .55) : .04, ac.currentTime, .08);
+      hissGain.gain.setTargetAtTime(drawing && mode === "finger" ? .045 : 0, ac.currentTime, .12);
+    }
+  }
+  haze = Math.max(0, haze - dt * .008);
+
+  // Ausatmen
+  if (exhaleT >= 0) {
+    exhaleT += dt;
+    const lvl = (exhaleSrc === "mic" ? micBlow : exhaleLevel()) * exhaleStrength;
+    exhaleLvl += (lvl - exhaleLvl) * Math.min(1, dt * 12);
+    const n = Math.round(exhaleLvl * 110 * dt + Math.random() * .5);
+    for (let i = 0; i < n; i++) {
+      const sp = L * rand(.14, .3) * (.5 + exhaleLvl * .6), ang = rand(-.28, .28);
+      emitSmoke(x0 + rand(0, r1 * .6), rand(-r1 * .8, r1 * .8), {
+        vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp,
+        s: r1 * rand(.5, 1), gs: r1 * rand(1.6, 3.2), a: rand(.06, .12), max: rand(3, 5.5), drag: 1.3, rot: rand(-1, 1), vr: 0,
+      });
+    }
+    if (exhaleSrc === "file" && exhaleT > exhaleDur + .2) exhaleT = -1;
+  }
+
+  // Rauch aus der Glut
+  if (state === "lit" || state === "lighting") {
+    const rate = drawing ? 18 : 55;
+    const n = Math.random() < rate * dt % 1 ? Math.ceil(rate * dt) : Math.floor(rate * dt);
+    for (let i = 0; i < n; i++) emitSmoke(bx + R * rand(.15, .45), -R * rand(.5, .8));
+    if (drawing && Math.random() < dt * 9) sparks.push({ x: bx + R * .2, y: rand(-R, R) * .8, vx: rand(10, 70), vy: rand(-60, 10), r: rand(.6, 1.6), life: 0, max: rand(.3, .8) });
+  }
+  for (const p of smoke) {
+    p.life += dt;
+    const k = p.life / p.max;
+    const drag = p.drag || 0;
+    const h = p.x * UX + p.y * UY, sw = Math.sin(h * .018 + t * .9 + p.ph) * 18 * dt * (1 + k * 3), wob = Math.sin(t * 1.3 + p.ph) * k * 9 * dt;
+    p.vx *= 1 - drag * dt; p.vy *= 1 - drag * dt;
+    p.vx += -UY * sw + (UX * 12 - p.vx * .15) * dt;
+    p.vy += UX * sw + (UY * 12 - p.vy * .15) * dt;
+    p.x += p.vx * dt - UY * wob; p.y += p.vy * dt + UX * wob; p.rot += p.vr * dt;
+  }
+  smoke = smoke.filter(p => p.life < p.max);
+  for (const s of sparks) { s.life += dt; s.vx -= UX * 140 * dt; s.vy -= UY * 140 * dt; s.x += s.vx * dt; s.y += s.vy * dt; }
+  sparks = sparks.filter(s => s.life < s.max);
+  for (const p of ashFall) { p.life += dt; p.vx -= UX * 900 * dt; p.vy -= UY * 900 * dt; p.y += p.vy * dt; p.x += p.vx * dt; p.rot += p.vr * dt; }
+  ashFall = ashFall.filter(p => p.life < 1.6);
+}
+
+function flick(byHand) {
+  const len = ashStart - bx;
+  if (len < r1 * .4) return;
+  const R = radius(bx), keep = byHand ? 0 : len * rand(0, .3);
+  const w = len - keep;
+  ashFall.push({ x: bx + keep + w / 2, y: 0, w, h: R * 1.9, vx: -UX * (byHand ? 60 : 0) + rand(-20, 20), vy: -UY * (byHand ? 60 : 0), rot: 0, vr: rand(-2, 2), life: 0 });
+  for (let i = 0; i < 16; i++) sparks.push({ x: bx + keep + rand(0, w), y: rand(-R, R) * .7, vx: rand(-40, 40), vy: rand(-30, 40), r: rand(.4, 1.2), life: 0, max: rand(.2, .6) });
+  ashStart = bx + keep; ashLimit = rand(2.2, 4);
+  buildEmberDots();
+}
+
+function finish() {
+  state = "out"; drawing = false; pid = null; heat = 0; breathState = "idle"; setCue("");
+  if (ac) { crackleGain.gain.setTargetAtTime(0, ac.currentTime, .1); hissGain.gain.setTargetAtTime(0, ac.currentTime, .1); }
+  document.getElementById("endtxt").textContent = `${totalDrags} ${totalDrags === 1 ? "Zug" : "Züge"}. Nur noch Crutch übrig.`;
+  setTimeout(() => document.getElementById("end").classList.remove("gone"), 1400);
+}
+
+// ---------- Eingabe ----------
+// Finger an die Glut legen und am Joint entlang Richtung Mundstück ziehen; loslassen = ausatmen
+let downAt = 0, downPt = null, pid = null, fingerX = 0, drawFrom = 0, moved = false;
+const toFrame = e => frameInv.transformPoint(new DOMPoint(e.clientX, e.clientY));
+cv.addEventListener("pointerdown", e => {
+  initAudio(); if (ac && ac.state === "suspended") ac.resume();
+  wakeUi();
+  if (state !== "lit" || pid !== null) return;
+  const pt = toFrame(e), R = radius(bx);
+  // nur an der Spitze (Glut/Asche) geht's los
+  if (pt.x < bx - R * 2.5 || pt.x > ashStart + R * 2 || Math.abs(pt.y) > R * 3.2) return;
+  pid = e.pointerId; downAt = performance.now(); downPt = pt; moved = false;
+  try { cv.setPointerCapture(pid); } catch (er) {}
+  drawing = mode === "finger"; drawTime = 0; drawFrom = bx; fingerX = bx;
+});
+cv.addEventListener("pointermove", e => {
+  if (e.pointerId !== pid) return;
+  const pt = toFrame(e);
+  if (Math.hypot(pt.x - downPt.x, pt.y - downPt.y) > 8) moved = true;
+  fingerX = Math.max(burnEnd, Math.min(fingerX, pt.x + radius(bx) * .2));
+});
+const release = e => {
+  if (e.pointerId !== pid) return;
+  pid = null;
+  const quick = performance.now() - downAt < 300 && !moved;
+  if (mode === "finger") drawing = false;
+  if (quick && downPt.x > bx && ashStart - bx > radius(bx) * .4) { flick(true); return; }
+  if (mode !== "finger") return;
+  const burnt = drawFrom - bx;
+  if (burnt > r1 * .3 || drawTime > .6) { totalDrags++; exhale(clamp(.55 + burnt / (L * .12), .55, 1.3)); }
+};
+cv.addEventListener("pointerup", release); cv.addEventListener("pointercancel", release);
+cv.addEventListener("contextmenu", e => e.preventDefault());
+
+document.getElementById("light").onclick = () => {
+  initAudio(); if (ac && ac.state === "suspended") ac.resume();
+  document.getElementById("start").classList.add("gone");
+  state = "lighting"; lightT = 0;
+  try { navigator.wakeLock && navigator.wakeLock.request("screen").catch(() => {}); } catch (e) {}
+  wakeUi();
+};
+document.getElementById("again").onclick = () => {
+  document.getElementById("end").classList.add("gone");
+  bx = burnStart; ashStart = bx; heat = 0; totalDrags = 0; smoke = []; ashFall = [];
+  state = "unlit";
+  document.getElementById("start").classList.remove("gone");
+};
+document.getElementById("flip").onclick = () => { orient = (orient + 1) % 2; buildFrame(); };
+document.getElementById("fs").onclick = () => {
+  const el = document.documentElement;
+  try { (document.fullscreenElement ? document.exitFullscreen() : (el.requestFullscreen || el.webkitRequestFullscreen).call(el))?.catch?.(() => {}); } catch (e) {}
+};
+// ---------- Menü & Einstellungen ----------
+const $ = id => document.getElementById(id);
+let mode = "finger", knock = false;
+const store = { get(k, d) { try { const v = localStorage.getItem("joint." + k); return v === null ? d : v; } catch (e) { return d; } },
+                set(k, v) { try { localStorage.setItem("joint." + k, v); } catch (e) {} } };
+$("micSens").value = store.get("micSens", 55); $("knockSens").value = store.get("knockSens", 55);
+$("micSens").oninput = () => store.set("micSens", $("micSens").value);
+$("knockSens").oninput = () => store.set("knockSens", $("knockSens").value);
+const status = t => { $("status").textContent = t || ""; };
+let menuOpen = false;
+$("menuBtn").onclick = () => {
+  menuOpen = !menuOpen; $("menu").hidden = !menuOpen;
+  $("menuBtn").setAttribute("aria-expanded", menuOpen); $("ui").classList.toggle("open", menuOpen); wakeUi();
+};
+function setSeg(a, b, on) { $(a).setAttribute("aria-checked", !on); $(b).setAttribute("aria-checked", on); }
+
+// Atem-Steuerung über das Mikrofon: Luftzug = rauschiges Signal, v. a. in den hohen Frequenzen
+let micStream = null, micAna = null, micBins, micFloor = 1e-7, micInt = 0, micLastOn = 0, micDb = 0;
+$("modeFinger").onclick = () => { mode = "finger"; setSeg("modeFinger", "modeBreath", false); $("breathOpts").hidden = true; stopMic(); status(""); };
+$("modeBreath").onclick = async () => {
+  initAudio(); if (ac && ac.state === "suspended") ac.resume();
+  if (!ac || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { status("Dieser Browser gibt kein Mikrofon frei."); return; }
+  status("Mikrofon wird angefragt …");
+  try {
+    micStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: false, autoGainControl: false } });
+  } catch (e) {
+    status("Kein Mikrofon-Zugriff. In der Claude-Vorschau ist das gesperrt: Öffne die Seite direkt im Browser über https (z. B. GitHub Pages) und erlaube das Mikrofon.");
+    return;
+  }
+  const src = ac.createMediaStreamSource(micStream);
+  micAna = ac.createAnalyser(); micAna.fftSize = 1024; micAna.smoothingTimeConstant = .5;
+  micBins = new Float32Array(micAna.frequencyBinCount);
+  src.connect(micAna);
+  micFloor = 1e-7; loFloor = 1e-7; breathState = "idle"; mode = "breath"; setSeg("modeFinger", "modeBreath", true); $("breathOpts").hidden = false;
+  status("Atem an. Zieh hörbar Luft ein, nah am Mikrofon (unten am Handy): Der Joint brennt, solange du ziehst. Dann kurz Luft anhalten und ins Mikro pusten, so kommt der Rauch raus.");
+};
+function stopMic() {
+  if (micStream) micStream.getTracks().forEach(t => t.stop());
+  micStream = null; micAna = null; micInt = 0; micBlow = 0; breathState = "idle"; setCue("");
+  if (exhaleSrc === "mic") exhaleT = -1;
+  if (mode === "finger" && pid === null) drawing = false;
+}
+// Atem-Modus: idle -> draw (Luft einsaugen, Joint brennt) -> hold (Luft anhalten) -> blow (reinpusten = Rauch)
+// Pusten erzeugt am Mikro starkes Wind-Rumpeln in den tiefen Frequenzen, Ziehen eher ein helles Zischen.
+let breathState = "idle", micLo = 0, micHi = 0, loFloor = 1e-7, holdStart = 0, micBlow = 0;
+function setCue(t) { $("cue").hidden = !t; $("cue").textContent = t || ""; }
+function bandPower(lo, hi) {
+  const hz = ac.sampleRate / micAna.fftSize; let p = 0;
+  for (let i = Math.max(1, Math.floor(lo / hz)); i < Math.min(micBins.length, Math.floor(hi / hz)); i++) p += Math.pow(10, micBins[i] / 10);
+  return p;
+}
+function track(fl, v, dt) { fl = v < fl ? fl + (v - fl) * Math.min(1, dt * 3) : fl * (1 + dt * .08); return Math.max(fl, 1e-9); }
+function breathStep(dt) {
+  if (!micAna) return;
+  micAna.getFloatFrequencyData(micBins);
+  const hi = bandPower(1200, 9000), lo = bandPower(40, 500);
+  const quiet = breathState === "idle" || breathState === "hold";
+  if (quiet) { micFloor = track(micFloor, hi, dt); loFloor = track(loFloor, lo, dt); }
+  micHi = 10 * Math.log10(hi / micFloor); micLo = 10 * Math.log10(lo / loFloor);
+  micDb = Math.max(micHi, micLo);
+  const thr = 22 - $("micSens").value * .17;          // 5 … 22 dB über dem Grundrauschen
+  const blowish = micLo > thr && micLo > micHi + 6;   // tiefes Wind-Rumpeln überwiegt
+  const sig = micDb > thr;
+  const drawRaw = clamp((micHi - thr) / 14, 0, 1);
+  micInt += ((breathState === "draw" ? drawRaw : 0) - micInt) * Math.min(1, dt * 10);
+  const blowRaw = clamp((micDb - thr) / 14, 0, 1.3);
+  micBlow += ((breathState === "blow" ? blowRaw : 0) - micBlow) * Math.min(1, dt * 10);
+  $("micMeter").style.width = clamp(micDb / 40, 0, 1) * 100 + "%";
+  $("micThr").style.left = clamp(thr / 40, 0, 1) * 100 + "%";
+  const now = performance.now();
+  if (sig) micLastOn = now;
+  const silentFor = now - micLastOn;
+
+  if (breathState === "idle") {
+    if (sig && !blowish && state === "lit") { breathState = "draw"; drawing = true; drawTime = 0; drawFrom = bx; setCue(""); }
+  } else if (breathState === "draw") {
+    if (silentFor > 350) {
+      drawing = false;
+      const burnt = drawFrom - bx;
+      if (burnt > r1 * .2 || drawTime > .5) { totalDrags++; breathState = "hold"; holdStart = now; exhaleStrength = clamp(.6 + burnt / (L * .1), .6, 1.4); setCue("Luft anhalten … und jetzt reinpusten"); }
+      else breathState = "idle";
+    }
+  } else if (breathState === "hold") {
+    if (sig) { breathState = "blow"; exhale(exhaleStrength, "mic"); setCue(""); }
+    else if (now - holdStart > 20000) { breathState = "idle"; setCue(""); }
+  } else if (breathState === "blow") {
+    if (silentFor > 450 || exhaleT > 10) { breathState = "idle"; exhaleT = -1; micBlow = 0; }
+  }
+}
+
+// Klopfen auf den Rahmen = Ruck im Beschleunigungssensor
+let lastAcc = null, lastKnock = 0;
+function onMotion(e) {
+  const a = e.accelerationIncludingGravity || e.acceleration;
+  if (!a || a.x === null) return;
+  const v = [a.x, a.y, a.z];
+  if (lastAcc) {
+    const jerk = Math.hypot(v[0] - lastAcc[0], v[1] - lastAcc[1], v[2] - lastAcc[2]);
+    const thr = 6 - $("knockSens").value * .052;   // 0.8 … 6 m/s² Sprung zwischen zwei Messungen
+    const now = performance.now();
+    if (jerk > thr && now - lastKnock > 450) {
+      lastKnock = now;
+      if (state === "lit" && ashStart - bx > r1 * .3) flick(true);
+    }
+  }
+  lastAcc = v;
+}
+$("knockOff").onclick = () => { knock = false; setSeg("knockOff", "knockOn", false); $("knockOpts").hidden = true; removeEventListener("devicemotion", onMotion); status(""); };
+$("knockOn").onclick = async () => {
+  try {
+    if (typeof DeviceMotionEvent === "undefined") throw 0;
+    if (typeof DeviceMotionEvent.requestPermission === "function") {
+      const r = await DeviceMotionEvent.requestPermission();   // iPhone fragt hier nach
+      if (r !== "granted") throw 0;
+    }
+  } catch (e) {
+    status("Kein Zugriff auf den Bewegungssensor. In der Claude-Vorschau ist das gesperrt: Öffne die Seite direkt im Browser über https und erlaube „Bewegung & Ausrichtung“.");
+    return;
+  }
+  lastAcc = null; addEventListener("devicemotion", onMotion);
+  knock = true; setSeg("knockOff", "knockOn", true); $("knockOpts").hidden = false;
+  status("Klopfen an. Tipp mit dem Finger seitlich auf den Handyrahmen, dann fällt die Asche ab.");
+  // Falls nach 2 s noch kein einziges Sensor-Ereignis kam, liefert diese Ansicht keine Daten
+  setTimeout(() => { if (knock && lastAcc === null) status("Der Bewegungssensor liefert hier keine Daten. Öffne die Seite direkt im Browser über https."); }, 2000);
+};
+
+let uiTimer;
+function wakeUi() { const u = document.getElementById("ui"); u.classList.remove("dim"); clearTimeout(uiTimer); uiTimer = setTimeout(() => { if (!menuOpen) u.classList.add("dim"); }, 3500); }
+
+addEventListener("resize", resize);
+resize(); wakeUi();
+let last = performance.now();
+function loop(now) {
+  const dt = Math.min(.05, (now - last) / 1000); last = now;
+  update(dt, now / 1000); render(now / 1000);
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
+
+</body>
+</html>
