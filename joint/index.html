@@ -155,6 +155,15 @@ function buildBody() {
     f.fillRect(-rand(.4, 1.6), -rand(.3, 1), rand(.8, 3.2), rand(.6, 2));
     f.restore();
   }
+  // größere, unregelmäßige Blattstücke
+  const leaf = ["#3b3a1e", "#57502a", "#6e5c33", "#2c2615", "#847046", "#4d5428"];
+  for (let i = 0; i < bw * bh * .035; i++) {
+    const x = rand(filterLen, bw), y = rand(0, bh), r = rand(1.5, 4.5), k = 4 + (Math.random() * 4 | 0);
+    f.globalAlpha = rand(.35, .8); f.fillStyle = leaf[(Math.random() * leaf.length) | 0];
+    f.beginPath();
+    for (let j = 0; j < k; j++) { const a = j / k * 6.283 + rand(-.3, .3), rr = r * rand(.45, 1.1); f.lineTo(x + Math.cos(a) * rr * 1.4, y + Math.sin(a) * rr); }
+    f.closePath(); f.fill();
+  }
   f.globalAlpha = 1; f.lineCap = "round";
   for (let i = 0; i < bw * .25; i++) {
     const x = rand(filterLen, bw), y = rand(0, bh), a = rand(-.5, .5), len = rand(3, 12);
@@ -178,7 +187,24 @@ function buildBody() {
   c.drawImage(fk, 0, 0, bw, bh);
   c.filter = "none";
   // 2) Dünnes Zigarettenpapier: halbtransparent, warm-grau
-  c.fillStyle = "rgba(238,229,208,.46)"; c.fillRect(0, 0, bw, bh);
+  c.fillStyle = "rgba(238,229,208,.34)"; c.fillRect(0, 0, bw, bh);
+  // Papier ist nicht überall gleich dick: wolkige, längs gezogene Struktur (dort schimmert mal mehr, mal weniger Tabak durch)
+  const cloud = (cw, ch, alpha) => {
+    const nw = Math.max(2, Math.ceil(bw / cw)), nh = Math.max(2, Math.ceil(bh / ch));
+    const k = document.createElement("canvas"); k.width = nw; k.height = nh;
+    const kc = k.getContext("2d"), im = kc.createImageData(nw, nh);
+    for (let i = 0; i < im.data.length; i += 4) { im.data[i] = 240; im.data[i + 1] = 232; im.data[i + 2] = 212; im.data[i + 3] = Math.pow(Math.random(), 1.6) * 255; }
+    kc.putImageData(im, 0, 0);
+    c.save(); c.globalAlpha = alpha; c.imageSmoothingEnabled = true; c.imageSmoothingQuality = "high";
+    c.drawImage(k, 0, 0, bw, bh); c.restore();
+  };
+  cloud(26, 7, .26); cloud(9, 3.5, .2); cloud(3.5, 2, .12);
+  // feine Papierfasern
+  for (let i = 0; i < bw * 1.4; i++) {
+    const x = rand(0, bw), y = rand(0, bh), a = rand(-.6, .6) + (Math.random() < .3 ? rand(-1.5, 1.5) : 0), len = rand(1.5, 6);
+    c.strokeStyle = `rgba(250,244,228,${rand(.06, .16)})`; c.lineWidth = rand(.25, .55);
+    c.beginPath(); c.moveTo(x, y); c.lineTo(x + Math.cos(a) * len, y + Math.sin(a) * len); c.stroke();
+  }
   c.fillStyle = "rgba(240,232,214,.45)"; c.fillRect(0, 0, filterLen, bh);
   // Wasserzeichen-Linien quer zum Papier
   c.strokeStyle = "rgba(255,250,235,.07)"; c.lineWidth = 1;
@@ -200,6 +226,10 @@ function buildBody() {
   // Zylinder-Schattierung, Spalte für Spalte (Kegelform)
   for (let x = 0; x < bw; x += 2) {
     const r = r0 + (r1 - r0) * (x / fullLen);
+    const rim = c.createLinearGradient(0, oy - r, 0, oy + r);
+    rim.addColorStop(0, "rgba(236,228,208,.42)"); rim.addColorStop(.22, "rgba(236,228,208,.06)");
+    rim.addColorStop(.5, "rgba(236,228,208,0)"); rim.addColorStop(.8, "rgba(236,228,208,.06)"); rim.addColorStop(1, "rgba(236,228,208,.3)");
+    c.fillStyle = rim; c.fillRect(x, oy - r, 2, r * 2);
     const g = c.createLinearGradient(0, oy - r, 0, oy + r);
     g.addColorStop(0, "rgba(30,22,12,.55)");
     g.addColorStop(.14, "rgba(30,22,12,.08)");
@@ -249,7 +279,8 @@ function buildSmoke() {
   // Vier Varianten: Value-Noise (mehrere Oktaven) × weicher radialer Abfall
   smokeSprites = [];
   const N = 96;
-  for (let v = 0; v < 4; v++) {
+  for (let v = 0; v < 8; v++) {
+    const tint = v < 4 ? [150, 156, 166] : [206, 209, 215];   // 0–3 grauer Rauch, 4–7 hellere Schwaden
     const k = document.createElement("canvas"); k.width = k.height = N;
     const c = k.getContext("2d"), img = c.createImageData(N, N), d = img.data;
     const oct = [8, 16, 32].map(g => { const a = []; for (let i = 0; i < (g + 1) * (g + 1); i++) a.push(Math.random()); return { g, a }; });
@@ -263,7 +294,7 @@ function buildSmoke() {
       const n = vn(oct[0], u, w) * .55 + vn(oct[1], u, w) * .3 + vn(oct[2], u, w) * .15;
       const a = Math.pow(fall, 1.6) * Math.pow(Math.max(0, n - .25) / .75, 1.4);
       const i = (y * N + x) * 4;
-      d[i] = 200; d[i + 1] = 207; d[i + 2] = 218; d[i + 3] = a * 255;
+      d[i] = tint[0]; d[i + 1] = tint[1]; d[i + 2] = tint[2]; d[i + 3] = a * 255;
     }
     c.putImageData(img, 0, 0); smokeSprites.push(k);
   }
@@ -288,7 +319,7 @@ function bodyClip(c, R) {
 function emitSmoke(x, y, o) {
   if (smoke.length > 1500) return;
   const v = rand(26, 40), sd = rand(-3, 3);
-  smoke.push(Object.assign({ x, y, vx: UX * v - UY * sd, vy: UY * v + UX * sd, s: r1 * rand(.14, .22), gs: r1 * rand(.45, .9), a: rand(.1, .2), life: 0, max: rand(3.5, 6.5), rot: rand(0, 6), vr: rand(-.4, .4), ph: rand(0, 6), sx: 1, v: (Math.random() * 4) | 0 }, o || {}));
+  smoke.push(Object.assign({ x, y, vx: UX * v - UY * sd, vy: UY * v + UX * sd, s: r1 * rand(.14, .22), gs: r1 * rand(.45, .9), a: rand(.08, .16), life: 0, max: rand(3.5, 6.5), rot: rand(0, 6), vr: rand(-.4, .4), ph: rand(0, 6), sx: 1, v: Math.random() < .25 ? 4 + (Math.random() * 4 | 0) : (Math.random() * 4 | 0) }, o || {}));
 }
 // Ausatmen: Rauch kommt aus dem Mund (Filter-Ecke), Menge folgt der Lautstärke der Aufnahme
 let exhaleT = -1, exhaleLvl = 0, analyser, anaBuf, exhaleBuf = null, exhaleRaw = null;
@@ -580,12 +611,14 @@ function update(dt, t) {
     const n = Math.round(exhaleLvl * gust * 190 * dt + Math.random() * .5);
     for (let i = 0; i < n; i++) {
       // gemischte Schwaden: ein Teil dichte Wolken, der Rest dünne Schleier; sie reichen bis über die gegenüberliegende Ecke
-      const dense = Math.random() < .35;
+      const dense = Math.random() < .35, streak = !dense && Math.random() < .14;
       const sp = L * rand(.6, 1.6) * (.55 + exhaleLvl * .5), ang = rand(-.24, .24) + (Math.random() < .4 ? rand(-.18, .18) : 0);
       emitSmoke(x0 + rand(0, r1 * .8), rand(-r1, r1), {
         vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp,
-        s: r1 * rand(.6, 1.2) * (dense ? 1.3 : 1), gs: r1 * rand(2.5, 5) * (dense ? 1 : 1.4),
-        a: dense ? rand(.07, .13) : rand(.025, .055), max: rand(3.5, 6), drag: rand(.8, 1.1), rot: rand(-1.5, 1.5), vr: 0, str: rand(.2, .7),
+        s: r1 * rand(.6, 1.2) * (dense ? 1.3 : streak ? .5 : 1), gs: r1 * rand(2.5, 5) * (dense ? 1 : streak ? .7 : 1.4),
+        a: dense ? rand(.05, .09) : streak ? rand(.05, .08) : rand(.02, .04), max: rand(3.5, 6) * (streak ? 1.2 : 1), drag: rand(.8, 1.1),
+        rot: streak ? rand(-.3, .3) : rand(-1.5, 1.5), vr: 0, str: streak ? rand(2.5, 4) : rand(.2, .7),
+        v: streak || Math.random() < .2 ? 4 + (Math.random() * 4 | 0) : (Math.random() * 4 | 0),
       });
     }
     if (exhaleSrc === "file" && exhaleT > exhaleDur + .2) exhaleT = -1;
@@ -609,7 +642,7 @@ function update(dt, t) {
     p.x += p.vx * dt - UY * wob; p.y += p.vy * dt + UX * wob; p.rot += p.vr * dt;
   }
   smoke = smoke.filter(p => p.life < p.max);
-  for (const s of sparks) { s.life += dt; s.vx -= UX * 140 * dt; s.vy -= UY * 140 * dt; s.x += s.vx * dt; s.y += s.vy * dt; }
+  for (const s of sparks) { s.life += dt; const g = s.g ?? 140; s.vx -= UX * g * dt; s.vy -= UY * g * dt; s.x += s.vx * dt; s.y += s.vy * dt; }
   sparks = sparks.filter(s => s.life < s.max);
   for (const p of ashFall) { p.life += dt; p.vx -= UX * 900 * dt; p.vy -= UY * 900 * dt; p.y += p.vy * dt; p.x += p.vx * dt; p.rot += p.vr * dt; }
   ashFall = ashFall.filter(p => p.life < 1.6);
@@ -632,10 +665,11 @@ function flick(byHand) {
 
 function sparkPuff() {
   const R = radius(bx), tip = Math.max(bx, ashStart);
-  const n = 6 + Math.floor(Math.random() * 6);
+  const n = 12 + Math.floor(Math.random() * 10);
+  const DX = -UX, DY = -UY;                       // "unten" auf dem Bildschirm, im Joint-Koordinatensystem
   for (let i = 0; i < n; i++) {
-    const f = rand(-.8, .8);
-    sparks.push({ x: rand(bx, tip) + R * .15, y: f * R, vx: rand(25, 130), vy: f * rand(20, 70) + rand(-25, 25), r: rand(1, 2.2), life: 0, max: rand(.35, .9) });
+    const f = rand(-.8, .8), sp = rand(150, 380), out = rand(0, 90), sc = rand(-70, 70);
+    sparks.push({ x: rand(bx, tip) + R * .15, y: f * R, vx: DX * sp + out - DY * sc, vy: DY * sp + DX * sc, r: rand(1, 2.2), life: 0, max: rand(.35, .9), g: 600 });
   }
   heat = Math.min(1.2, heat + .3);   // Glut glimmt kurz auf
 }
