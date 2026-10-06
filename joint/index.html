@@ -43,6 +43,7 @@ html, body { margin: 0; }
 .overlay { position: fixed; inset: 0; overflow-y: auto; padding-block: 24px; display: flex; flex-direction: column; align-items: center; justify-content: safe center; gap: 14px; text-align: center; padding-inline: 16px; z-index: 2; background: radial-gradient(ellipse at center, rgba(11,10,9,.35), rgba(11,10,9,.85)); transition: opacity .8s; }
 .overlay.gone { opacity: 0; pointer-events: none; }
 .overlay h1 { font-family: var(--display); font-weight: 600; font-size: clamp(30px, 7vw, 56px); margin: 0; line-height: 1; letter-spacing: -.01em; }
+#help { color: var(--ink) !important; opacity: .92; font-size: 16px !important; text-shadow: 0 1px 10px rgba(0,0,0,.9), 0 0 3px rgba(0,0,0,.8); }
 .overlay p { margin: 0; color: var(--muted); max-width: 40ch; line-height: 1.45; font-size: 15px; }
 .go { font: 600 17px var(--body); color: #1a0d04; background: var(--ember); border: 0; border-radius: 999px; padding: 14px 30px; cursor: pointer; box-shadow: 0 0 40px rgba(255,138,42,.45); }
 button:focus-visible { outline: 2px solid var(--ember); outline-offset: 3px; }
@@ -58,7 +59,8 @@ button:focus-visible { outline: 2px solid var(--ember); outline-offset: 3px; }
   <h1>Handy-Joint</h1>
   <p id="help"></p>
   <button class="go" id="light">🔥 Anzünden</button>
-  <div class="settings">
+  <p class="status" id="status"></p>
+  <div class="settings" hidden>
     <div class="group">
       <span class="lbl">Ziehen mit</span>
       <div class="seg" role="radiogroup">
@@ -97,7 +99,6 @@ button:focus-visible { outline: 2px solid var(--ember); outline-offset: 3px; }
     <div class="row">
       <button id="flip" title="Filter auf die andere Seite">⇄ Filter links/rechts</button>
     </div>
-    <p class="status" id="status"></p>
   </div>
 </div>
 
@@ -464,7 +465,7 @@ const HOOK = [   // gepfiffene Melodie: [Frequenz, Länge in Achteln]
   [[N.Fs5, 2], 0, [N.Ds5, 1], [N.Cs5, 1], [N.B4, 2], 0, [N.Gs4, 2], 0],
   [[N.B4, 6], 0, 0, 0, 0, 0, 0, 0],
 ];
-let musicOn = store0("music") !== "0", mAc = null, mOut = null, mFilter = null, mNext = 0, mStep = 0, mTimer = null, mGate = false;
+let musicOn = true, mAc = null, mOut = null, mFilter = null, mNext = 0, mStep = 0, mTimer = null, mGate = false;
 function store0(k) { try { return localStorage.getItem("joint." + k); } catch (e) { return null; } }
 const musicQuiet = () => mode === "breath" && !!micStream;   // im Atem-Modus nur dumpf und leise, damit das Mikro sie nicht als Ziehen hört
 function musicBuild() {
@@ -604,7 +605,7 @@ function loadDefaultMusic() {
     customBlob = b; customName = "Standard-Musik"; customIsDefault = true; customBuf = null; showCustom(); decodeCustom();
   }).catch(() => {});
 }
-idbGet("music").then(v => { if (v && v.blob) { customBlob = v.blob; customName = v.name || "Audiodatei"; customIsDefault = false; showCustom(); decodeCustom(); } else loadDefaultMusic(); }).catch(loadDefaultMusic);
+loadDefaultMusic();   // Musik ist immer die Datei aus dem Repo
 function customStart() {
   if (cAc !== ac) {
     // laut fürs Handy: normalisieren, verdichten, anheben, weich begrenzen
@@ -1851,18 +1852,19 @@ cv.addEventListener("contextmenu", e => e.preventDefault());
 document.getElementById("light").onclick = async () => {
   ensureAudio(); decodeCustom();
   const motionP = requestMotion();   // auch ohne Klopfen: für die Neigung der Glutwelt
+  let useMode = prefMode, note = "";
   if (prefMode === "breath") {
     status("Mikrofon wird angefragt …");
-    if (!await startMic()) { status("Kein Mikrofon-Zugriff. Erlaube das Mikrofon für diese Seite (in der Claude-Vorschau geht es nicht) oder wähle Finger."); return; }
+    if (!await startMic()) { useMode = "finger"; note = "Ohne Mikrofon: Finger auf die Glut legen und Richtung Mundstück wischen."; }
   }
   const motionOk = await motionP;
-  if (prefKnock && !motionOk) { stopMic(); status("Kein Zugriff auf den Bewegungssensor. Erlaube „Bewegung & Ausrichtung“ oder schalte Klopfen aus."); return; }
   if (motionOk) {
-    lastAcc = null; gAvg = null; gHold = null; holdAcc = []; motionHist = []; lastOverhead = -1e9; knockThr = 6 - $("knockSens").value * .052;   // 0.8 … 6 m/s² Sprung zwischen zwei Messungen
+    lastAcc = null; gAvg = null; gHold = null; holdAcc = []; motionHist = []; lastOverhead = -1e9; knockThr = 6 - 55 * .052;   // 0.8 … 6 m/s² Sprung zwischen zwei Messungen
     removeEventListener("devicemotion", onMotion); addEventListener("devicemotion", onMotion);
   }
-  micSens = +$("micSens").value;
-  mode = prefMode; knock = prefKnock; status(""); mStep = 0;
+  micSens = 40;
+  mode = useMode; knock = prefKnock && motionOk; status(""); mStep = 0;
+  if (note) { setCue(note); setTimeout(() => setCue(""), 5000); }
   document.getElementById("start").classList.add("gone");
   state = "lighting"; lightT = 0;
   try { navigator.wakeLock && navigator.wakeLock.request("screen").catch(() => {}); } catch (e) {}
@@ -1882,7 +1884,7 @@ const $ = id => document.getElementById(id);
 const store = { get(k, d) { try { const v = localStorage.getItem("joint." + k); return v === null ? d : v; } catch (e) { return d; } },
                 set(k, v) { try { localStorage.setItem("joint." + k, v); } catch (e) {} } };
 let mode = "finger", knock = false;
-let prefMode = store.get("mode", "finger"), prefKnock = store.get("knock", "0") === "1";
+let prefMode = "breath", prefKnock = true;   // feste Vorgaben (kein Einstellungsmenü mehr)
 let micSens = +store.get("micSens", 40);      // wird beim Anzünden für die Runde festgelegt
 $("micSens").value = micSens;
 $("micSens").oninput = () => store.set("micSens", $("micSens").value);
@@ -1892,10 +1894,8 @@ $("knockSens").value = store.get("knockSens", 55);
 $("knockSens").oninput = () => store.set("knockSens", $("knockSens").value);
 const status = t => { $("status").textContent = t || ""; };
 function setSeg(a, b, on) { $(a).setAttribute("aria-checked", !on); $(b).setAttribute("aria-checked", on); }
-const HELP = {
-  finger: "Handyecke mit dem Filter an die Lippen. Finger auf die Glut legen und am Joint entlang Richtung Mundstück wischen, er brennt so weit ab, wie du ziehst. Loslassen zum Ausatmen. Kurz auf die Asche tippen zum Abaschen. Geheimtipp: Halte beim Ziehen einen zweiten Finger irgendwo auf dem Display.",
-  breath: "Handyecke mit dem Filter an die Lippen. Hörbar Luft einziehen, der Joint brennt, solange du ziehst. Du kannst mehrmals hintereinander ziehen. Erst wenn du reinpustest, atmest du aus. Kurz auf die Asche tippen zum Abaschen. Geheimtipp: Halte beim Ziehen einen Finger irgendwo auf dem Display.",
-};
+const HELP_TEXT = "Mach mit dem Joint alles, was du auch mit einem echten Joint machen würdest: Zieh an ihm, atme aus, asch ab, drück ihn aus. But if you’re in for the ride: Tap and hold the screen, während du dran ziehst!!";
+const HELP = { breath: HELP_TEXT, finger: HELP_TEXT };
 function showPrefs() {
   setSeg("modeFinger", "modeBreath", prefMode === "breath"); $("micOpts").hidden = prefMode !== "breath";
   setSeg("knockOff", "knockOn", prefKnock); $("knockOpts").hidden = !prefKnock;
