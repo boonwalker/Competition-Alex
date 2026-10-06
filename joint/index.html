@@ -118,7 +118,7 @@ let ctx = mainCtx;   // wird beim Verbiegen kurz auf eine Zwischenebene umgescha
 const rand = (a, b) => a + Math.random() * (b - a);
 const clamp = (v, a, b) => Number.isFinite(v) ? Math.max(a, Math.min(b, v)) : (v === Infinity ? b : a);
 let bodyPad = 8, W, H, dpr, L, S, r0, r1, x0, fullLen, filterLen, burnStart, burnEnd;
-let body, ashTex, smokeSprites = [], frameM, frameInv, smokeLayer = null, sctx = null;
+let ashTexFine = null, body, ashTex, smokeSprites = [], frameM, frameInv, smokeLayer = null, sctx = null;
 let orient = 0;           // 0: Filter unten rechts, 1: Filter unten links
 let UX = 0, UY = -1;      // "oben" auf dem Bildschirm, im Joint-Koordinatensystem
 let GX = 0, GY = 1;       // echter Boden beim Halten: zur Bildschirmseite gegenüber dem Filter (Filter rechts -> Boden links)
@@ -153,7 +153,7 @@ function resize() {
   if (state === "unlit") { bx = burnStart; ashStart = bx; }
   bx = clamp(bx ?? burnStart, burnEnd, burnStart); ashStart = Math.max(ashStart ?? bx, bx);
   bodyPad = Math.ceil(r1 * .3) + 4;
-  buildBody(); buildAsh(); buildSmoke(); buildEmberDots(); buildFrame();
+  buildBody(); buildAsh(); buildAshFine(); buildSmoke(); buildEmberDots(); buildFrame();
 }
 
 function buildFrame() {
@@ -290,8 +290,33 @@ function buildBody() {
 
 function buildAsh() {
   const w = Math.ceil(r1 * 10), h = Math.ceil(r1 * 2.2);
-  ashTex = document.createElement("canvas"); ashTex.width = w * 2; ashTex.height = h * 2;
-  const c = ashTex.getContext("2d"); c.scale(2, 2);
+  ashTex = document.createElement("canvas"); ashTex.width = w; ashTex.height = h;
+  const c = ashTex.getContext("2d");
+  c.fillStyle = "#8c867e"; c.fillRect(0, 0, w, h);
+  for (let i = 0; i < 2500; i++) {
+    const v = Math.floor(rand(60, 190));
+    c.fillStyle = `rgba(${v},${v - 4},${v - 10},${rand(.15, .5)})`;
+    c.fillRect(rand(0, w), rand(0, h), rand(1, 4), rand(1, 3));
+  }
+  // Risse und Ringe der Asche
+  c.lineCap = "round";
+  for (let i = 0; i < 60; i++) {
+    c.strokeStyle = `rgba(30,28,26,${rand(.3, .7)})`; c.lineWidth = rand(.6, 1.8);
+    let x = rand(0, w), y = rand(0, h);
+    c.beginPath(); c.moveTo(x, y);
+    for (let j = 0; j < 5; j++) { x += rand(-6, 6); y += rand(-10, 10); c.lineTo(x, y); }
+    c.stroke();
+  }
+  for (let x = 0; x < w; x += rand(6, 18)) {
+    c.strokeStyle = `rgba(35,32,30,${rand(.2, .45)})`; c.lineWidth = rand(.8, 2);
+    c.beginPath(); c.moveTo(x, 0); c.bezierCurveTo(x + rand(-5, 5), h * .3, x + rand(-5, 5), h * .7, x + rand(-4, 4), h); c.stroke();
+  }
+}
+
+function buildAshFine() {
+  const w = Math.ceil(r1 * 10), h = Math.ceil(r1 * 2.2);
+  ashTexFine = document.createElement("canvas"); ashTexFine.width = w * 2; ashTexFine.height = h * 2;
+  const c = ashTexFine.getContext("2d"); c.scale(2, 2);
   c.fillStyle = "#9a958d"; c.fillRect(0, 0, w, h);
   // Brennschichten: feine Ringe quer zur Achse
   for (let x = 0; x < w; x += rand(2.5, 6)) {
@@ -705,16 +730,12 @@ function drawJointPart(t, R, lit) {
     ctx.beginPath();
     const aR = R * .96, tip = ashStart;
     ctx.moveTo(bx - 1, -aR);
-    const bump = (x, sd) => R * (.04 * Math.sin(x / R * 2.1 + sd) + .025 * Math.sin(x / R * 5.3 + sd * 2) + .012 * Math.sin(x / R * 11 + sd));
-    for (let x = bx; x <= tip - aR * .4; x += 1.5) ctx.lineTo(x, -aR + bump(x, seeds[0]));
-    for (let i = 0; i <= 12; i++) {   // ausgefranstes, bröseliges Ende
-      const a = -Math.PI / 2 + i / 12 * Math.PI, j = 1 + .08 * Math.sin(i * 2.7 + seeds[2]) + .05 * Math.sin(i * 5.3);
-      ctx.lineTo(tip - aR * .4 + Math.cos(a) * aR * .55 * j, Math.sin(a) * aR * .97 * j);
-    }
-    for (let x = tip - aR * .4; x >= bx; x -= 1.5) ctx.lineTo(x, aR + bump(x, seeds[1]));
+    for (let x = bx; x <= tip - aR * .4; x += 6) ctx.lineTo(x, -aR + Math.sin(x * .3 + seeds[0]) * R * .03);
+    ctx.bezierCurveTo(tip + aR * .1, -aR * .9, tip + aR * .2, aR * .7, tip - aR * .4, aR * .95);
+    for (let x = tip - aR * .4; x >= bx; x -= 6) ctx.lineTo(x, aR + Math.sin(x * .27 + seeds[1]) * R * .03);
     ctx.closePath(); ctx.clip();
     const pat = ctx.createPattern(ashTex, "repeat");
-    pat.setTransform(new DOMMatrix().translate(tip + aR * .3, -ashTex.height / 4).scale(.5));
+    pat.setTransform(new DOMMatrix().translate(tip + aR * .3, -ashTex.height / 2));
     ctx.fillStyle = pat; ctx.fillRect(bx - 2, -aR - 2, ashLen + aR * 2, aR * 2 + 4);
     const ag = ctx.createLinearGradient(0, -aR, 0, aR);
     ag.addColorStop(0, "rgba(255,255,255,.12)"); ag.addColorStop(.25, "rgba(255,255,255,.22)"); ag.addColorStop(.6, "rgba(0,0,0,.1)"); ag.addColorStop(1, "rgba(0,0,0,.7)");
@@ -896,7 +917,7 @@ function render(t) {
     ctx.beginPath();
     if (ctx.roundRect) ctx.roundRect(-hw, -hh, p.w, p.h, [hh * .35, hh * .9, hh * .9, hh * .35]); else ctx.rect(-hw, -hh, p.w, p.h);
     ctx.clip();
-    ctx.drawImage(ashTex, 0, 0, Math.min(p.w * 2, ashTex.width), ashTex.height, -hw, -hh, p.w, p.h);
+    ctx.drawImage(ashTex, 0, 0, Math.min(p.w, ashTex.width), ashTex.height, -hw, -hh, p.w, p.h);
     const fg = ctx.createLinearGradient(0, -hh, 0, hh);
     fg.addColorStop(0, "rgba(0,0,0,.35)"); fg.addColorStop(.3, "rgba(255,255,255,.18)"); fg.addColorStop(.55, "rgba(0,0,0,0)"); fg.addColorStop(1, "rgba(0,0,0,.75)");
     ctx.fillStyle = fg; ctx.fillRect(-hw, -hh, p.w, p.h);
@@ -1075,23 +1096,7 @@ function flick(byHand) {
   }
   const R = radius(bx), keep = byHand ? 0 : len * rand(0, .3);
   const w = len - keep;
-  // in mehrere Brocken zerbrechen …
-  const pieces = Math.max(1, Math.round(w / (R * rand(.7, 1.1))));
-  let px = bx + keep;
-  for (let i = 0; i < pieces; i++) {
-    const pw = w / pieces * rand(.8, 1.15);
-    ashFall.push({ x: px + pw / 2, y: rand(-.1, .1) * R, w: pw * .95, h: R * rand(1.5, 1.9), vx: GX * (byHand ? rand(40, 110) : rand(0, 30)) + rand(-25, 25), vy: GY * (byHand ? rand(40, 110) : rand(0, 30)) + rand(-25, 25), rot: rand(-.2, .2), vr: rand(-3, 3), life: 0 });
-    px += pw;
-  }
-  // … und viele feine Flocken, die flatternd fallen
-  for (let i = 0; i < 70 + w / R * 40; i++) {
-    const dust = Math.random() < .45, sz = R * (dust ? rand(.015, .04) : rand(.04, .18) * (Math.random() < .15 ? 1.8 : 1)), k = 5 + (Math.random() * 4 | 0), pts = [];
-    for (let j = 0; j < k; j++) { const a = j / k * 6.283 + rand(-.5, .5); pts.push([Math.cos(a) * sz * rand(.35, 1.25), Math.sin(a) * sz * rand(.3, 1)]); }
-    flakes.push({ x: bx + keep + rand(0, w), y: rand(-1, 1) * R * .9, vx: GX * rand(20, 160) + rand(-50, 50), vy: GY * rand(20, 160) + rand(-50, 50), rot: rand(0, 6), vr: rand(-9, 9),
-      pts, shade: (dust ? rand(110, 175) : rand(85, 185)) | 0, life: 0, max: rand(1, 2.2), ph: rand(0, 6), dust });
-  }
-  // Aschestaub
-  for (let i = 0; i < 10; i++) emitSmoke(bx + keep + rand(0, w), rand(-R, R) * .6, { vx: GX * rand(10, 60), vy: GY * rand(10, 60), s: R * rand(.3, .6), gs: R * rand(.8, 1.6), a: rand(.05, .1), max: rand(1.2, 2.2), v: Math.random() * 4 | 0 });
+  ashFall.push({ x: bx + keep + w / 2, y: 0, w, h: R * 1.9, vx: GX * (byHand ? 60 : 0) + rand(-20, 20), vy: GY * (byHand ? 60 : 0), rot: 0, vr: rand(-2, 2), life: 0 });
   for (let i = 0; i < 16; i++) sparks.push({ x: bx + keep + rand(0, w), y: rand(-R, R) * .7, vx: rand(-40, 40), vy: rand(-30, 40), r: rand(.4, 1.2), life: 0, max: rand(.2, .6) });
   ashStart = bx + keep; ashLimit = rand(2.2, 4);
   buildEmberDots();
@@ -1210,7 +1215,7 @@ function drawCrumple(t) {
   ctx.fillStyle = g; ctx.fill();
   ctx.save(); ctx.clip();
   // feine Körnung aus der Aschetextur
-  const pat = ctx.createPattern(ashTex, "repeat"); pat.setTransform(new DOMMatrix().scale(.3).rotate(crushSeed[0] * 40));
+  const pat = ctx.createPattern(ashTexFine, "repeat"); pat.setTransform(new DOMMatrix().scale(.3).rotate(crushSeed[0] * 40));
   ctx.globalAlpha = .55; ctx.fillStyle = pat; ctx.fillRect(-R, -ry * 1.5, Lf + R * 2, ry * 3); ctx.globalAlpha = 1;
   // verkohlte Stellen
   for (let i = 0; i < 7; i++) {
