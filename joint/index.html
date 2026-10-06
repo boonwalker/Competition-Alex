@@ -429,32 +429,41 @@ const MELODY = [   // Takte 5–8 der 8-Takt-Runde
   [N.C5, 0, N.D5, N.E5, N.A4, 0, 0, 0],
   [N.G4, 0, N.B4, 0, N.D5, 0, 0, 0],
 ];
-let musicOn = store0("music") === "1", mAc = null, mOut = null, mFilter = null, mNext = 0, mStep = 0, mTimer = null;
+// Die Musik läuft nur, solange am Joint gezogen wird, und verstummt schlagartig, wenn der Zug endet.
+// Beim nächsten Zug geht sie an der Stelle weiter, an der sie aufgehört hat.
+let musicOn = store0("music") === "1", mAc = null, mOut = null, mFilter = null, mNext = 0, mStep = 0, mTimer = null, mGate = false;
 function store0(k) { try { return localStorage.getItem("joint." + k); } catch (e) { return null; } }
 const musicQuiet = () => mode === "breath" && !!micStream;   // im Atem-Modus nur dumpf und leise, damit das Mikro sie nicht als Ziehen hört
 function musicBuild() {
-  mAc = ac; mOut = ac.createGain(); mOut.gain.value = 0;
+  mAc = ac;
   mFilter = ac.createBiquadFilter(); mFilter.type = "lowpass"; mFilter.frequency.value = 12000;
   const comp = ac.createDynamicsCompressor(); comp.threshold.value = -10; comp.ratio.value = 4;   // schützt vor Übersteuern
-  mOut.connect(mFilter).connect(comp).connect(ac.destination);
-  mNext = ac.currentTime + .1;
+  mFilter.connect(comp).connect(ac.destination);
+  mOut = ac.createGain(); mOut.gain.value = 0; mOut.connect(mFilter);
+  mGate = false;
 }
-function musicStart() {
-  if (!ac) return;
+function musicGate(open) {
+  if (!ac || open === mGate) return;
   if (mAc !== ac) musicBuild();
-  mNext = Math.max(mNext, ac.currentTime + .1);
-  mOut.gain.setTargetAtTime(musicQuiet() ? .35 : .7, ac.currentTime, .3);
-  mFilter.frequency.setTargetAtTime(musicQuiet() ? 800 : 12000, ac.currentTime, .1);
-  if (!mTimer) mTimer = setInterval(musicTick, 25);
+  const now = ac.currentTime;
+  if (open) {
+    mFilter.frequency.value = musicQuiet() ? 800 : 12000;
+    mOut.gain.cancelScheduledValues(now); mOut.gain.setValueAtTime(0, now); mOut.gain.linearRampToValueAtTime(musicQuiet() ? .35 : .7, now + .03);
+    mNext = now + .02;
+    if (!mTimer) mTimer = setInterval(musicTick, 25);
+  } else {
+    // schon vorgeplante, noch nicht gespielte Achtel zurückspulen und alles Geplante sofort abschneiden
+    mStep = Math.max(0, mStep - Math.max(0, Math.ceil((mNext - now) / STEP)));
+    mOut.disconnect();
+    mOut = ac.createGain(); mOut.gain.value = 0; mOut.connect(mFilter);
+  }
+  mGate = open;
 }
-function musicStop() {
-  clearInterval(mTimer); mTimer = null;
-  if (mOut && mAc === ac && ac) mOut.gain.setTargetAtTime(0, ac.currentTime, .15);
-}
+function musicStop() { musicGate(false); clearInterval(mTimer); mTimer = null; }
 function musicTick() {
-  if (!ac || ac.state !== "running") return;
-  if (mAc !== ac) { musicBuild(); musicStart(); }
-  if (mNext < ac.currentTime - .5) mNext = ac.currentTime + .05;   // nach Pause nicht nachholen
+  if (!ac || ac.state !== "running" || !mGate) return;
+  if (mAc !== ac) { musicBuild(); return; }
+  if (mNext < ac.currentTime - .5) mNext = ac.currentTime + .05;
   while (mNext < ac.currentTime + .25) { musicStep(mStep, mNext); mNext += STEP; mStep++; }
 }
 function env(g, t, peak, a, d) { g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(peak, t + a); g.gain.exponentialRampToValueAtTime(.0001, t + a + d); }
@@ -519,10 +528,8 @@ showMusic();
 document.getElementById("music").onclick = () => {
   ensureAudio(); musicOn = !musicOn;
   try { localStorage.setItem("joint.music", musicOn ? "1" : "0"); } catch (e) {}
-  showMusic(); musicOn ? musicStart() : musicStop();
+  showMusic(); if (!musicOn) musicStop();
 };
-// gespeicherte Einstellung: Musik startet mit der ersten Berührung (vorher darf der Browser nichts abspielen)
-document.addEventListener("pointerdown", () => { if (musicOn && !mTimer) { ensureAudio(); musicStart(); } });
 
 // ---------- Zeichnen ----------
 function drawFlame(x, y, t) {
@@ -733,6 +740,7 @@ function update(dt, t) {
     }
   }
   haze = Math.max(0, haze - dt * .008);
+  musicGate(musicOn && state === "lit" && drawing);
 
   // Ausatmen
   if (exhaleT >= 0) {
@@ -860,8 +868,7 @@ document.getElementById("light").onclick = async () => {
     addEventListener("devicemotion", onMotion);
   }
   micSens = +$("micSens").value;
-  mode = prefMode; knock = prefKnock; status("");
-  if (musicOn) musicStart();
+  mode = prefMode; knock = prefKnock; status(""); mStep = 0;
   document.getElementById("start").classList.add("gone");
   state = "lighting"; lightT = 0;
   try { navigator.wakeLock && navigator.wakeLock.request("screen").catch(() => {}); } catch (e) {}
@@ -870,7 +877,7 @@ document.getElementById("again").onclick = () => {
   document.getElementById("end").classList.add("gone");
   bx = burnStart; ashStart = bx; heat = 0; totalDrags = 0; smoke = []; ashFall = [];
   stopMic(); removeEventListener("devicemotion", onMotion); mode = "finger"; knock = false;
-  if (musicOn) musicStart();
+  musicStop();
   state = "unlit";
   document.getElementById("start").classList.remove("gone");
 };
@@ -964,7 +971,7 @@ function breathStep(dt) {
   if (breathState === "idle") { micFloor = track(micFloor, hi, dt); loFloor = track(loFloor, lo, dt); totFloor = track(totFloor, tot, dt); }
   micHi = 10 * Math.log10(hi / micFloor); micLo = 10 * Math.log10(lo / loFloor); micTot = 10 * Math.log10(tot / totFloor);
   micDb = Math.max(micHi, micLo, micTot);
-  const sig = mTimer ? (micHi > thr || micDb > thr + 15) : micDb > thr;   // Musik ist im Atem-Modus dumpf gefiltert, hohe Frequenzen kommen nur vom Atem
+  const sig = musicOn ? (micHi > thr || micDb > thr + 15) : micDb > thr;   // Musik ist im Atem-Modus dumpf gefiltert, hohe Frequenzen kommen nur vom Atem
   const now = performance.now();
   const wasSilent = !micPrevSig && now - micLastOn > 120; micPrevSig = sig;
   if (sig) micLastOn = now;
