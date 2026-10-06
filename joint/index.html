@@ -36,7 +36,7 @@ button:focus-visible { outline: 2px solid var(--ember); outline-offset: 3px; }
 
 <div class="overlay" id="start">
   <h1>Handy-Joint</h1>
-  <p>Handy quer halten, Filterende an die Lippen. Finger aufs Display legen und halten, um zu ziehen. Loslassen zum Ausatmen. Auf die Asche tippen zum Abaschen.</p>
+  <p>Der Joint liegt diagonal über dem Display. Die Handyecke mit dem Filter (unten rechts) an die Lippen. Finger aufs Display legen und halten, um zu ziehen. Loslassen zum Ausatmen. Auf die Asche tippen zum Abaschen.</p>
   <button class="go" id="light">🔥 Anzünden</button>
 </div>
 
@@ -52,7 +52,8 @@ const rand = (a, b) => a + Math.random() * (b - a);
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 let W, H, dpr, L, S, r0, r1, x0, fullLen, filterLen, burnStart, burnEnd;
 let body, ashTex, smokeSprite, frameM, frameInv;
-let orient = 0;           // Haltung: gespiegelt / im Hochformat links- oder rechtsrum
+let orient = 0;           // 0: Filter unten rechts, 1: Filter unten links
+let UX = 0, UY = -1;      // "oben" auf dem Bildschirm, im Joint-Koordinatensystem
 let state = "unlit";      // unlit | lighting | lit | out
 let bx, ashStart, heat = 0, drawing = false, drawStart = 0, drawTime = 0, totalDrags = 0, haze = 0, lightT = 0;
 let smoke = [], sparks = [], ashFall = [], emberDots = [];
@@ -65,7 +66,7 @@ function resize() {
   dpr = Math.min(window.devicePixelRatio || 1, 2);
   W = innerWidth; H = innerHeight;
   cv.width = W * dpr; cv.height = H * dpr;
-  L = Math.max(W, H); S = Math.min(W, H);
+  L = Math.hypot(W, H); S = Math.min(W, H);
   r1 = Math.min(S * 0.085, L * 0.042); r0 = r1 * 0.74;
   x0 = -L / 2 - 6; fullLen = L * 0.9; filterLen = fullLen * 0.16;
   burnStart = x0 + fullLen; burnEnd = x0 + filterLen + L * 0.025;
@@ -75,10 +76,13 @@ function resize() {
 }
 
 function buildFrame() {
-  const portrait = H > W;
-  let deg = portrait ? ((orient >> 1) % 2 ? 90 : -90) : 0;
-  frameM = new DOMMatrix().translate(W / 2, H / 2).rotate(deg).scale(orient % 2 ? -1 : 1, 1);
+  // Joint-Achse = Bildschirmdiagonale, vom Filter-Eck unten zur gegenüberliegenden oberen Ecke
+  const dx = orient ? W : -W, dy = -H, th = Math.atan2(dy, dx);
+  frameM = new DOMMatrix().translate(W / 2, H / 2).rotate(th * 180 / Math.PI);
+  if (-Math.cos(th) > 0) frameM = frameM.scale(1, -1);   // Oberseite des Joints zeigt nach oben
   frameInv = frameM.inverse();
+  const a = frameInv.transformPoint(new DOMPoint(W / 2, H / 2)), b = frameInv.transformPoint(new DOMPoint(W / 2, H / 2 - 1));
+  UX = b.x - a.x; UY = b.y - a.y;
 }
 
 // ---------- Papier, Füllung, Crutch (einmal vorgerendert) ----------
@@ -89,67 +93,85 @@ function conePath(c, ox, oy) {
 }
 function buildBody() {
   const pad = 4, bw = Math.ceil(fullLen), bh = Math.ceil(r1 * 2 + pad * 2);
-  body = document.createElement("canvas");
-  body.width = bw * dpr; body.height = bh * dpr;
-  const c = body.getContext("2d"); c.scale(dpr, dpr);
   const oy = bh / 2;
-  c.save(); conePath(c, 0, oy); c.clip();
-  // Grundton: dünnes, leicht gebrochenes Weiß
-  c.fillStyle = "#ece5d6"; c.fillRect(0, 0, bw, bh);
-  // Füllung schimmert durchs Papier
-  const herb = ["rgba(74,86,38,", "rgba(96,78,40,", "rgba(58,64,30,", "rgba(110,96,52,"];
-  for (let i = 0; i < 1400; i++) {
-    const x = rand(filterLen + 2, bw), y = oy + rand(-1, 1) * r1, s = rand(1.5, 6);
-    const g = c.createRadialGradient(x, y, 0, x, y, s);
-    const col = herb[i % 4], a = rand(.05, .16);
-    g.addColorStop(0, col + a + ")"); g.addColorStop(1, col + "0)");
-    c.fillStyle = g; c.fillRect(x - s, y - s, s * 2, s * 2);
+  const mk = () => { const k = document.createElement("canvas"); k.width = bw * dpr; k.height = bh * dpr; const c = k.getContext("2d"); c.scale(dpr, dpr); return [k, c]; };
+  // 1) Füllung: Krümel, Blattstücke, Stängel – sitzt unter dem Papier
+  const [fk, f] = mk();
+  f.fillStyle = "#6a5636"; f.fillRect(0, 0, bw, bh);
+  const dens = x => .55 + .45 * (Math.sin(x * .021 + seeds[0]) * .5 + Math.sin(x * .053 + seeds[1]) * .3 + Math.sin(x * .11) * .2);
+  const crumb = ["#2e2414", "#6d5733", "#a08a58", "#4a4d29", "#1f1b10", "#b39d6a", "#5e5a2f", "#7a5e34", "#c2ae7e"];
+  for (let i = 0; i < bw * bh * .9; i++) {
+    const x = rand(filterLen, bw), y = rand(0, bh);
+    if (Math.random() > dens(x) + .25) continue;
+    f.fillStyle = crumb[(Math.random() * crumb.length) | 0];
+    f.globalAlpha = rand(.55, 1);
+    f.save(); f.translate(x, y); f.rotate(rand(0, 3.14));
+    f.fillRect(-rand(.4, 1.6), -rand(.3, 1), rand(.8, 3.2), rand(.6, 2));
+    f.restore();
   }
-  // Crutch: etwas dichter, Zickzack-Karton schimmert durch
-  c.fillStyle = "rgba(226,212,184,.75)"; c.fillRect(0, 0, filterLen, bh);
-  c.strokeStyle = "rgba(150,128,96,.28)"; c.lineWidth = 1.2;
+  f.globalAlpha = 1; f.lineCap = "round";
+  for (let i = 0; i < bw * .25; i++) {
+    const x = rand(filterLen, bw), y = rand(0, bh), a = rand(-.5, .5), len = rand(3, 12);
+    f.strokeStyle = Math.random() < .6 ? "rgba(168,148,98,.8)" : "rgba(40,32,18,.8)"; f.lineWidth = rand(.5, 1.2);
+    f.beginPath(); f.moveTo(x, y); f.lineTo(x + Math.cos(a) * len, y + Math.sin(a) * len); f.stroke();
+  }
+  // Crutch: aufgerollter Karton statt Füllung
+  f.fillStyle = "#cdbd98"; f.fillRect(0, 0, filterLen, bh);
+  f.strokeStyle = "rgba(120,98,66,.55)"; f.lineWidth = 1.3;
   for (let k = 0; k < 3; k++) {
-    c.beginPath();
-    const x = filterLen * (0.25 + k * 0.25);
-    for (let j = 0; j <= 6; j++) c.lineTo(x + (j % 2 ? 6 : -6), oy - r0 + (j / 6) * r0 * 2);
-    c.stroke();
+    f.beginPath(); const x = filterLen * (0.25 + k * 0.25);
+    for (let j = 0; j <= 6; j++) f.lineTo(x + (j % 2 ? 6 : -6), oy - r0 + (j / 6) * r0 * 2);
+    f.stroke();
   }
-  c.strokeStyle = "rgba(140,120,90,.35)"; c.lineWidth = 1;
-  c.beginPath(); c.moveTo(filterLen, 0); c.lineTo(filterLen, bh); c.stroke();
-  // Papierfasern
-  for (let i = 0; i < 900; i++) {
-    const x = rand(0, bw), y = oy + rand(-1, 1) * r1, len = rand(8, 40);
-    c.strokeStyle = Math.random() < .5 ? "rgba(255,255,255,.10)" : "rgba(90,70,40,.04)";
-    c.lineWidth = rand(.4, 1);
-    c.beginPath(); c.moveTo(x, y); c.lineTo(x + len, y + rand(-1.5, 1.5)); c.stroke();
-  }
-  // Klebenaht
-  c.strokeStyle = "rgba(190,175,140,.45)"; c.lineWidth = 1.4;
-  c.beginPath(); c.moveTo(0, oy - r0 * .32); c.lineTo(bw, oy - r1 * .32); c.stroke();
-  c.strokeStyle = "rgba(255,255,255,.18)"; c.lineWidth = 1;
-  c.beginPath(); c.moveTo(0, oy - r0 * .32 - 1.5); c.lineTo(bw, oy - r1 * .32 - 1.5); c.stroke();
+
+  body = mk()[0];
+  const c = body.getContext("2d"); c.setTransform(dpr, 0, 0, dpr, 0, 0);
+  c.save(); conePath(c, 0, oy); c.clip();
+  // Papier liegt leicht diffus über der Füllung
+  try { c.filter = "blur(0.35px)"; } catch (e) {}
+  c.drawImage(fk, 0, 0, bw, bh);
+  c.filter = "none";
+  // 2) Dünnes Zigarettenpapier: halbtransparent, warm-grau
+  c.fillStyle = "rgba(238,229,208,.46)"; c.fillRect(0, 0, bw, bh);
+  c.fillStyle = "rgba(240,232,214,.45)"; c.fillRect(0, 0, filterLen, bh);
+  // Wasserzeichen-Linien quer zum Papier
+  c.strokeStyle = "rgba(255,250,235,.07)"; c.lineWidth = 1;
+  for (let x = 2; x < bw; x += 5.5) { c.beginPath(); c.moveTo(x, 0); c.lineTo(x + 1, bh); c.stroke(); }
+  // Doppellage an der Klebenaht
+  const sy = oy - r1 * .38;
+  c.fillStyle = "rgba(220,208,178,.28)"; c.beginPath(); c.moveTo(0, oy - r0 * .38); c.lineTo(bw, sy); c.lineTo(bw, sy + r1 * .22); c.lineTo(0, oy - r0 * .38 + r0 * .22); c.fill();
+  c.strokeStyle = "rgba(120,100,70,.35)"; c.lineWidth = .8;
+  c.beginPath(); c.moveTo(0, oy - r0 * .38); c.lineTo(bw, sy); c.stroke();
   // Knitterfalten
-  for (let i = 0; i < 40; i++) {
-    const x = rand(filterLen, bw), y = oy + rand(-.8, .8) * r1, len = rand(6, 22), a = rand(-.9, .9);
-    c.lineWidth = rand(.6, 1.4);
-    c.strokeStyle = "rgba(255,255,255,.22)";
+  for (let i = 0; i < 45; i++) {
+    const x = rand(filterLen, bw), y = oy + rand(-.8, .8) * r1, len = rand(5, 18), a = rand(-1.1, 1.1);
+    c.lineWidth = rand(.5, 1);
+    c.strokeStyle = "rgba(255,248,230,.16)";
     c.beginPath(); c.moveTo(x, y); c.lineTo(x + Math.cos(a) * len, y + Math.sin(a) * len); c.stroke();
-    c.strokeStyle = "rgba(60,45,25,.10)";
-    c.beginPath(); c.moveTo(x + 1, y + 1.2); c.lineTo(x + 1 + Math.cos(a) * len, y + 1.2 + Math.sin(a) * len); c.stroke();
+    c.strokeStyle = "rgba(40,30,15,.12)";
+    c.beginPath(); c.moveTo(x + .8, y + 1); c.lineTo(x + .8 + Math.cos(a) * len, y + 1 + Math.sin(a) * len); c.stroke();
   }
   // Zylinder-Schattierung, Spalte für Spalte (Kegelform)
-  for (let x = 0; x < bw; x += 3) {
+  for (let x = 0; x < bw; x += 2) {
     const r = r0 + (r1 - r0) * (x / fullLen);
     const g = c.createLinearGradient(0, oy - r, 0, oy + r);
-    g.addColorStop(0, "rgba(40,30,20,.45)");
-    g.addColorStop(.12, "rgba(40,30,20,.05)");
-    g.addColorStop(.28, "rgba(255,255,255,.38)");
-    g.addColorStop(.42, "rgba(255,255,255,0)");
-    g.addColorStop(.75, "rgba(30,20,10,.18)");
-    g.addColorStop(1, "rgba(15,10,5,.75)");
-    c.fillStyle = g; c.fillRect(x, oy - r, 3, r * 2);
+    g.addColorStop(0, "rgba(30,22,12,.55)");
+    g.addColorStop(.14, "rgba(30,22,12,.08)");
+    g.addColorStop(.3, "rgba(255,248,230,.22)");
+    g.addColorStop(.45, "rgba(255,248,230,0)");
+    g.addColorStop(.75, "rgba(25,18,8,.22)");
+    g.addColorStop(1, "rgba(10,7,3,.8)");
+    c.fillStyle = g; c.fillRect(x, oy - r, 2, r * 2);
   }
   c.restore();
+  // 3) Papierkorn auf Pixelebene
+  const id = c.getImageData(0, 0, body.width, body.height), d = id.data;
+  for (let i = 0; i < d.length; i += 4) {
+    if (!d[i + 3]) continue;
+    const n = (Math.random() - .5) * 14;
+    d[i] += n; d[i + 1] += n; d[i + 2] += n;
+  }
+  c.putImageData(id, 0, 0);
 }
 
 function buildAsh() {
@@ -206,13 +228,14 @@ function bodyClip(c, R) {
 // ---------- Partikel ----------
 function emitSmoke(x, y, o) {
   if (smoke.length > 700) return;
-  smoke.push(Object.assign({ x, y, vx: rand(-4, 4), vy: rand(-38, -22), s: r1 * rand(.25, .45), gs: r1 * rand(.8, 1.4), a: rand(.3, .55), life: 0, max: rand(3.5, 6), rot: rand(0, 6), vr: rand(-.6, .6), ph: rand(0, 6), sx: rand(.6, 1) }, o || {}));
+  const v = rand(22, 38), sd = rand(-4, 4);
+  smoke.push(Object.assign({ x, y, vx: UX * v - UY * sd, vy: UY * v + UX * sd, s: r1 * rand(.25, .45), gs: r1 * rand(.8, 1.4), a: rand(.3, .55), life: 0, max: rand(3.5, 6), rot: rand(0, 6), vr: rand(-.6, .6), ph: rand(0, 6), sx: rand(.6, 1) }, o || {}));
 }
 function exhale() {
   const R = r1;
   let n = 0;
   const id = setInterval(() => {
-    for (let i = 0; i < 5; i++) emitSmoke(x0 + rand(0, R), rand(-R, R * .6), { vx: L * rand(.18, .38), vy: rand(-30, 5), s: R * rand(1.5, 2.5), gs: R * rand(3, 6), a: rand(.22, .4), max: rand(3, 5.5), drag: 1.1 });
+    for (let i = 0; i < 5; i++) emitSmoke(x0 + rand(0, R), rand(-R, R * .6), { vx: L * rand(.18, .38) + UX * rand(0, 25), vy: UY * rand(0, 25) + rand(-8, 8), s: R * rand(1.5, 2.5), gs: R * rand(3, 6), a: rand(.22, .4), max: rand(3, 5.5), drag: 1.1 });
     if (++n > 24) clearInterval(id);
   }, 45);
   breath(false);
@@ -256,7 +279,7 @@ function breath(inhale) {
 function drawFlame(x, y, t) {
   const h = r1 * 3.2, w = r1 * .9, fl = 1 + Math.sin(t * 31) * .06 + Math.sin(t * 17) * .05;
   ctx.save(); ctx.globalCompositeOperation = "lighter";
-  ctx.translate(x, y); ctx.scale(1, fl);
+  ctx.translate(x, y); ctx.rotate(Math.atan2(UY, UX) + Math.PI / 2); ctx.scale(1, fl);
   const g = ctx.createRadialGradient(0, -h * .25, 0, 0, -h * .2, h * .7);
   g.addColorStop(0, "rgba(255,250,220,.95)"); g.addColorStop(.35, "rgba(255,190,70,.75)"); g.addColorStop(.7, "rgba(255,100,20,.25)"); g.addColorStop(1, "rgba(255,60,0,0)");
   ctx.fillStyle = g;
@@ -305,7 +328,7 @@ function render(t) {
     ctx.beginPath(); ctx.moveTo(burnStart - 1, -r1); ctx.quadraticCurveTo(burnStart + r1 * .6 * k, -r1 * .3, burnStart + r1 * 1.3 * k, -r1 * .05);
     ctx.lineTo(burnStart + r1 * 1.3 * k, r1 * .1); ctx.quadraticCurveTo(burnStart + r1 * .5 * k, r1 * .5, burnStart - 1, r1); ctx.closePath();
     const tg = ctx.createLinearGradient(0, -r1, 0, r1);
-    tg.addColorStop(0, "#8a8274"); tg.addColorStop(.3, "#f2ece0"); tg.addColorStop(1, "#4a4236");
+    tg.addColorStop(0, "#6f6656"); tg.addColorStop(.3, "#d9cfb9"); tg.addColorStop(1, "#3a3328");
     ctx.fillStyle = state === "lighting" ? `rgba(60,35,20,${1 - k * .4})` : tg; ctx.fill();
     ctx.strokeStyle = "rgba(80,60,40,.35)"; ctx.lineWidth = 1;
     for (let i = 1; i < 4; i++) { ctx.beginPath(); ctx.moveTo(burnStart, -r1 + i * r1 * .5); ctx.quadraticCurveTo(burnStart + r1 * .5 * k, -r1 * .2 + i * .1 * r1, burnStart + r1 * 1.2 * k, 0); ctx.stroke(); }
@@ -375,7 +398,7 @@ function render(t) {
   }
 
   // Feuerzeug
-  if (state === "lighting" && lightT < 1.1) drawFlame(burnStart + r1 * .4, r1 * 2.9, t);
+  if (state === "lighting" && lightT < 1.1) drawFlame(burnStart + r1 * .4 - UX * r1 * 2.9, -UY * r1 * 2.9, t);
 
   // Rauch
   ctx.save(); ctx.globalCompositeOperation = "screen";
@@ -432,15 +455,16 @@ function update(dt, t) {
     p.life += dt;
     const k = p.life / p.max;
     const drag = p.drag || 0;
-    p.vx *= 1 - drag * dt; p.vx += Math.sin(p.y * .018 + t * .9 + p.ph) * 18 * dt * (1 + k * 3);
-    p.vy += (-12 - p.vy * .15) * dt;
-    p.x += p.vx * dt + Math.sin(t * 1.3 + p.ph) * k * 9 * dt;
-    p.y += p.vy * dt; p.rot += p.vr * dt;
+    const h = p.x * UX + p.y * UY, sw = Math.sin(h * .018 + t * .9 + p.ph) * 18 * dt * (1 + k * 3), wob = Math.sin(t * 1.3 + p.ph) * k * 9 * dt;
+    p.vx *= 1 - drag * dt; p.vy *= 1 - drag * dt;
+    p.vx += -UY * sw + (UX * 12 - p.vx * .15) * dt;
+    p.vy += UX * sw + (UY * 12 - p.vy * .15) * dt;
+    p.x += p.vx * dt - UY * wob; p.y += p.vy * dt + UX * wob; p.rot += p.vr * dt;
   }
   smoke = smoke.filter(p => p.life < p.max);
-  for (const s of sparks) { s.life += dt; s.vy += 140 * dt; s.x += s.vx * dt; s.y += s.vy * dt; }
+  for (const s of sparks) { s.life += dt; s.vx -= UX * 140 * dt; s.vy -= UY * 140 * dt; s.x += s.vx * dt; s.y += s.vy * dt; }
   sparks = sparks.filter(s => s.life < s.max);
-  for (const p of ashFall) { p.life += dt; p.vy += 900 * dt; p.y += p.vy * dt; p.x += p.vx * dt; p.rot += p.vr * dt; }
+  for (const p of ashFall) { p.life += dt; p.vx -= UX * 900 * dt; p.vy -= UY * 900 * dt; p.y += p.vy * dt; p.x += p.vx * dt; p.rot += p.vr * dt; }
   ashFall = ashFall.filter(p => p.life < 1.6);
 }
 
@@ -449,7 +473,7 @@ function flick(byHand) {
   if (len < r1 * .4) return;
   const R = radius(bx), keep = byHand ? 0 : len * rand(0, .3);
   const w = len - keep;
-  ashFall.push({ x: bx + keep + w / 2, y: 0, w, h: R * 1.9, vx: rand(-20, 40), vy: byHand ? 60 : 0, rot: 0, vr: rand(-2, 2), life: 0 });
+  ashFall.push({ x: bx + keep + w / 2, y: 0, w, h: R * 1.9, vx: -UX * (byHand ? 60 : 0) + rand(-20, 20), vy: -UY * (byHand ? 60 : 0), rot: 0, vr: rand(-2, 2), life: 0 });
   for (let i = 0; i < 16; i++) sparks.push({ x: bx + keep + rand(0, w), y: rand(-R, R) * .7, vx: rand(-40, 40), vy: rand(-30, 40), r: rand(.4, 1.2), life: 0, max: rand(.2, .6) });
   ashStart = bx + keep;
   buildEmberDots();
@@ -494,7 +518,7 @@ document.getElementById("again").onclick = () => {
   state = "unlit";
   document.getElementById("start").classList.remove("gone");
 };
-document.getElementById("flip").onclick = () => { orient = (orient + 1) % 4; buildFrame(); };
+document.getElementById("flip").onclick = () => { orient = (orient + 1) % 2; buildFrame(); };
 document.getElementById("fs").onclick = () => {
   const el = document.documentElement;
   try { (document.fullscreenElement ? document.exitFullscreen() : (el.requestFullscreen || el.webkitRequestFullscreen).call(el))?.catch?.(() => {}); } catch (e) {}
