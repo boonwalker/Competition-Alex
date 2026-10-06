@@ -464,7 +464,7 @@ const HOOK = [   // gepfiffene Melodie: [Frequenz, Länge in Achteln]
   [[N.Fs5, 2], 0, [N.Ds5, 1], [N.Cs5, 1], [N.B4, 2], 0, [N.Gs4, 2], 0],
   [[N.B4, 6], 0, 0, 0, 0, 0, 0, 0],
 ];
-let musicOn = store0("music") === "1", mAc = null, mOut = null, mFilter = null, mNext = 0, mStep = 0, mTimer = null, mGate = false;
+let musicOn = store0("music") !== "0", mAc = null, mOut = null, mFilter = null, mNext = 0, mStep = 0, mTimer = null, mGate = false;
 function store0(k) { try { return localStorage.getItem("joint." + k); } catch (e) { return null; } }
 const musicQuiet = () => mode === "breath" && !!micStream;   // im Atem-Modus nur dumpf und leise, damit das Mikro sie nicht als Ziehen hört
 function musicBuild() {
@@ -572,9 +572,9 @@ async function idbGet(k) { const db = await idb(); return new Promise((res, rej)
 async function idbDel(k) { const db = await idb(); return new Promise(res => { const tx = db.transaction("files", "readwrite"); tx.objectStore("files").delete(k); tx.oncomplete = res; tx.onerror = res; }); }
 function showCustom(msg) {
   document.getElementById("musicInfoRow").hidden = !customBlob && !msg;
-  document.getElementById("musicClear").hidden = !customBlob;
+  document.getElementById("musicClear").hidden = !customBlob || customIsDefault;
   const n = customBuf ? Math.ceil(customBuf.duration / SNIP) : 0;
-  document.getElementById("musicInfo").textContent = msg || (customBlob ? `Eigene Musik: ${customName}${n ? ` · ${n} Schnipsel à ${SNIP} s, zufällig bei jedem Zug` : ""}` : "");
+  document.getElementById("musicInfo").textContent = msg || (customBlob ? `${customIsDefault ? "" : "Eigene Musik: "}${customName}${n ? ` · ${n} Schnipsel à ${SNIP} s, zufällig bei jedem Zug` : ""}` : "");
 }
 async function decodeCustom() {
   if (!customBlob || customBuf || !ac) return;
@@ -590,13 +590,21 @@ async function decodeCustom() {
 document.getElementById("musicPick").onclick = () => { ensureAudio(); document.getElementById("musicFile").click(); };
 document.getElementById("musicFile").onchange = async () => {
   const f = document.getElementById("musicFile").files[0]; if (!f) return;
-  customBlob = f; customName = f.name; customBuf = null;
+  customBlob = f; customName = f.name; customBuf = null; customIsDefault = false;
   try { await idbPut("music", { blob: f, name: f.name }); } catch (e) {}
   if (!musicOn) { musicOn = true; try { localStorage.setItem("joint.music", "1"); } catch (e) {} showMusic(); }
   showCustom("Wird geladen …"); ensureAudio(); await decodeCustom();
 };
-document.getElementById("musicClear").onclick = async () => { customBlob = null; customBuf = null; customName = ""; try { await idbDel("music"); } catch (e) {} showCustom(); };
-idbGet("music").then(v => { if (v && v.blob) { customBlob = v.blob; customName = v.name || "Audiodatei"; showCustom(); decodeCustom(); } }).catch(() => {});
+document.getElementById("musicClear").onclick = async () => { customBlob = null; customBuf = null; customName = ""; try { await idbDel("music"); } catch (e) {} showCustom(); loadDefaultMusic(); };
+// Standard: die Musik aus dem Repo (musik.mp3). Eine selbst gewählte Datei auf dem Gerät hat Vorrang.
+let customIsDefault = false;
+function loadDefaultMusic() {
+  fetch("musik.mp3").then(r => r.ok ? r.blob() : null).then(b => {
+    if (!b || (customBlob && !customIsDefault)) return;
+    customBlob = b; customName = "Standard-Musik"; customIsDefault = true; customBuf = null; showCustom(); decodeCustom();
+  }).catch(() => {});
+}
+idbGet("music").then(v => { if (v && v.blob) { customBlob = v.blob; customName = v.name || "Audiodatei"; customIsDefault = false; showCustom(); decodeCustom(); } else loadDefaultMusic(); }).catch(loadDefaultMusic);
 function customStart() {
   if (cAc !== ac) {
     // laut fürs Handy: normalisieren, verdichten, anheben, weich begrenzen
@@ -1382,6 +1390,16 @@ function makeWorld() {
       x += w * rand(.75, 1.1) + rand(0, 14) * u * sc;
     }
   }
+  // Vordergrund: brennende Lehmhäuser links und rechts vom Tor, dazwischen brennende Trümmer
+  const fg = [], fgFires = [], m = Math.max(W, H);
+  for (let i = 0; i < 7; i++) {
+    const side = i % 2 ? 1 : -1, x = ww / 2 + side * m * rand(.12, .48), type = Math.random() < .75 ? "dome" : "tower", sc = rand(1.15, 1.45);
+    const w = (type === "dome" ? rand(50, 76) : rand(24, 32)) * u * sc, h = type === "dome" ? w * rand(.48, .6) : rand(60, 85) * u * sc, base = ground + rand(16, 46) * u;
+    const b = { x, base, w, h, sc, type, layer: 2, col: ADOBE[(Math.random() * ADOBE.length) | 0], fire: true, seed: Math.random() * 100, antenna: Math.random() < .3 };
+    b.fx = b.x + (hsh(b.seed) - .5) * w * .3; b.fy = base - h * (type === "dome" ? .9 : .98);
+    fg.push(b);
+  }
+  for (let i = 0; i < 9; i++) fgFires.push({ x: ww / 2 + rand(-.55, .55) * m, y: ground + rand(10, 70) * u, s: rand(12, 22) * u, seed: Math.random() * 90 });
   const mesas = [], farSpires = [];
   for (let x = -ww * .2; x < ww * 1.2; x += rand(90, 180) * u) mesas.push({ x, w: rand(80, 170) * u, h: rand(30, 70) * u, top: rand(.5, .8) });
   for (let i = 0; i < 12; i++) farSpires.push({ x: Math.random() * ww, h: rand(50, 110) * u, w: rand(4, 8) * u, seed: Math.random() * 10 });
@@ -1393,7 +1411,7 @@ function makeWorld() {
   for (let i = 0; i < 26; i++) crs.push(newCreature(u, ground, wallTop, true));
   const embers = [];
   for (let i = 0; i < 90; i++) embers.push({ x: Math.random() * ww, y: Math.random() * wh, v: rand(40, 150) * u, r: rand(.8, 2.6) * u, ph: Math.random() * 6 });
-  return { u, ground, wallTop, blds, mesas, farSpires, wallFires, rocks, crs, embers, smk: [], t: 0, theta: worldTargetAngle(),
+  return { u, ground, wallTop, blds, fg, fgFires, boost: 0, mesas, farSpires, wallFires, rocks, crs, embers, smk: [], t: 0, theta: worldTargetAngle(),
     saucer: { t: -2, y: wh * .2 }, shake: 0, gate: ww * rand(.38, .62),
     // Planet und Mond so, dass sie im sichtbaren Ausschnitt über der Stadt stehen
     planet: (() => { const m = Math.min(W, H), side = Math.random() < .5 ? -1 : 1; return { x: ww / 2 + side * m * rand(.35, .7), y: ground - 70 * u - m * .42, r: 62 * u, side }; })(),
@@ -1406,8 +1424,25 @@ function newCreature(u, ground, wallTop, scatter) {
     fire: Math.random() < .25, staff: Math.random() < .3, jump: 0, vy: 0, jy: 0, bub: scatter && Math.random() < .12 ? rand(.5, 1.8) : -rand(0, 3),
     txt: SHOUTS[(Math.random() * SHOUTS.length) | 0], eye: Math.random() < .25 ? [120, 230, 255] : [255, 200, 70], blink: 0, gone: 0 };
 }
+// Wie stark gerade gezogen wird: Mikro (Atem-Modus) oder Fingerbewegung (Finger-Modus)
+let lastFingerMove = 0;
+function drawStrength() {
+  if (mode === "breath" && micAna && ac) {
+    micAna.getFloatFrequencyData(micBins);
+    const hi = bandPower(1500, 9000), lo = bandPower(40, 400), tot = hi + lo + bandPower(400, 1500);
+    const thr = 22 - micSens * .17, db = 10 * Math.log10(Math.max(hi, 1e-12) / micFloor);
+    micFloor = hi < micFloor ? micFloor + (hi - micFloor) * .05 : micFloor;   // Grundrauschen nur nach unten nachführen
+    return clamp((db - thr) / 16, 0, 1.2);
+  }
+  const now = performance.now();
+  return now - lastFingerMove < 160 ? 1 : (pid !== null && drawing ? .3 : 0);
+}
 function updateWorld(dt) {
   const w = world, u = w.u; w.t += dt; w.shake = Math.max(0, w.shake - dt * 2);
+  // Flammen-Verstärkung folgt dem Ziehen: schnell hoch, langsamer wieder runter
+  const target = drawStrength();
+  w.boost += (target - w.boost) * Math.min(1, dt * (target > w.boost ? 9 : 2.5));
+  if (wAudio && wAudio.roar) wAudio.roar.gain.setTargetAtTime(.8 + w.boost * 1.2, ac.currentTime, .08);
   let d = worldTargetAngle() - w.theta; d = Math.atan2(Math.sin(d), Math.cos(d));
   w.theta += d * Math.min(1, dt * 7);   // weich dem Haltewinkel folgen
   if (Math.random() < dt * .7) w.shake = .7;
@@ -1424,11 +1459,11 @@ function updateWorld(dt) {
     if (!c.wall && Math.abs(c.x - w.gate) < 10 * u && Math.random() < dt * 2) c.gone = .001;   // durchs Tor geflüchtet
   }
   // Rauch aus den Bränden
-  for (const b of w.blds) if (b.fire && Math.random() < dt * (b.layer ? 3 : 2) && w.smk.length < 140)
+  for (const b of w.blds.concat(w.fg)) if (b.fire && Math.random() < dt * (b.layer ? 3 : 2) * (.6 + w.boost) && w.smk.length < 170)
     w.smk.push({ x: b.fx, y: b.fy - 8 * u * b.sc, vx: rand(-6, 6) * u - 6 * u, vy: -rand(18, 34) * u, r: rand(8, 14) * u * b.sc, gr: rand(10, 20) * u, a: rand(.35, .6), life: 0, max: rand(3, 6) });
   for (const p of w.smk) { p.life += dt; p.x += p.vx * dt + Math.sin(p.life * 1.3 + p.r) * 6 * u * dt; p.y += p.vy * dt; }
   w.smk = w.smk.filter(p => p.life < p.max);
-  for (const e of w.embers) { e.y += e.v * dt; e.x += Math.sin(w.t * 2 + e.ph) * 20 * u * dt - 15 * u * dt; if (e.y > wh + 10) { e.y = -wh * .3; e.x = Math.random() * ww * 1.2; } }
+  for (const e of w.embers) { e.y += e.v * dt * (.8 + w.boost * .8); e.x += Math.sin(w.t * 2 + e.ph) * 20 * u * dt - 15 * u * dt; if (e.y > wh + 10) { e.y = -wh * .3; e.x = Math.random() * ww * 1.2; } }
   w.saucer.t += dt; if (w.saucer.t > 7) { w.saucer.t = -rand(2, 5); w.saucer.y = wh * rand(.12, .28); }
 }
 
@@ -1522,7 +1557,8 @@ function renderWorld(t) {
     g = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, r); g.addColorStop(0, `rgba(30,14,10,${a})`); g.addColorStop(.6, `rgba(45,22,14,${a * .5})`); g.addColorStop(1, "rgba(45,22,14,0)");
     ctx.fillStyle = g; ctx.fillRect(p.x - r, p.y - r, r * 2, r * 2);
   }
-  for (const b of w.blds) if (b.fire) realFire(b.fx, b.fy + 4 * u * b.sc, (14 + hsh(b.seed + 1) * 12) * u * b.sc, t, b.seed);
+  const fm = .65 + w.boost * 1.15;   // Flammen lodern mit dem Ziehen auf
+  for (const b of w.blds) if (b.fire) realFire(b.fx, b.fy + 4 * u * b.sc, (14 + hsh(b.seed + 1) * 12) * u * b.sc * fm, t, b.seed);
   // Lehmmauer mit Tor
   drawWall2(w, u, t);
   // Wüstenboden vorne: Sand, Dünenkanten, Geröll
@@ -1537,10 +1573,21 @@ function renderWorld(t) {
     ctx.fillStyle = g; ctx.beginPath(); ctx.ellipse(r.x, r.y, r.r, r.r * r.sq, 0, 0, 7); ctx.fill();
   }
   // Bewohner
-  for (const c of w.crs.slice().sort((a, b) => a.y - b.y)) drawRobed(c, t, u);
+  // Bewohner, brennende Häuser und Feuer im Vordergrund nach Tiefe sortiert
+  const items = w.crs.map(c => [c.y, () => drawRobed(c, t, u)])
+    .concat(w.fg.map(b => [b.base, () => { drawBuilding2(b, t, u); realFire(b.fx, b.fy + 4 * u * b.sc, (18 + hsh(b.seed + 1) * 14) * u * b.sc * fm, t, b.seed); }]))
+    .concat(w.fgFires.map(f => [f.y, () => {
+      ctx.fillStyle = "rgba(20,8,4,.6)"; ctx.beginPath(); ctx.ellipse(f.x, f.y, f.s * .9, f.s * .25, 0, 0, 7); ctx.fill();   // verkohlte Trümmer
+      realFire(f.x, f.y, f.s * fm, t, f.seed);
+    }]));
+  items.sort((a, b) => a[0] - b[0]).forEach(it => it[1]());
+  // Feuerschein über allem, stärker beim Ziehen
+  ctx.save(); ctx.globalCompositeOperation = "lighter";
+  const fl = ctx.createLinearGradient(0, G - 120 * u, 0, G + 80 * u); fl.addColorStop(0, "rgba(255,110,30,0)"); fl.addColorStop(1, `rgba(255,110,30,${.06 + w.boost * .16})`);
+  ctx.fillStyle = fl; ctx.fillRect(-ww, G - 120 * u, ww * 3, 200 * u); ctx.restore();
   // Glutregen
   ctx.save(); ctx.globalCompositeOperation = "lighter";
-  for (const e of w.embers) { g = ctx.createRadialGradient(e.x, e.y, 0, e.x, e.y, e.r * 3); g.addColorStop(0, "rgba(255,220,130,.9)"); g.addColorStop(1, "rgba(255,80,0,0)"); ctx.fillStyle = g; ctx.fillRect(e.x - e.r * 3, e.y - e.r * 3, e.r * 6, e.r * 6); }
+  for (const e of w.embers) { const er = e.r * (.8 + w.boost * .7); g = ctx.createRadialGradient(e.x, e.y, 0, e.x, e.y, er * 3); g.addColorStop(0, "rgba(255,220,130,.9)"); g.addColorStop(1, "rgba(255,80,0,0)"); ctx.fillStyle = g; ctx.fillRect(e.x - er * 3, e.y - er * 3, er * 6, er * 6); }
   ctx.restore();
   // Vignette und Bauchbinde im Bildschirm
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -1622,7 +1669,7 @@ function drawWall2(w, u, t) {
   ctx.save(); ctx.globalCompositeOperation = "lighter";
   g = ctx.createRadialGradient(gx, bot - 8 * u, 0, gx, bot - 8 * u, 22 * u); g.addColorStop(0, "rgba(255,150,50,.6)"); g.addColorStop(1, "rgba(255,80,0,0)");
   ctx.fillStyle = g; ctx.fillRect(gx - 22 * u, bot - 30 * u, 44 * u, 30 * u); ctx.restore();
-  for (const f of w.wallFires) realFire(f.x, top + 2 * u, f.s, t, f.seed);
+  for (const f of w.wallFires) realFire(f.x, top + 2 * u, f.s * (.65 + w.boost * 1.15), t, f.seed);
 }
 // Wüstenvolk: kleine Kapuzenwesen in Roben, im Dunkel der Kapuze leuchtende Augen
 function drawRobed(c, t, u) {
@@ -1693,7 +1740,7 @@ function drawRobed(c, t, u) {
 }
 
 // ---------- Ton: Kameraflug, lodernde Flammen und panisches Geschrei ----------
-let wAudio = null;
+let wAudio = null, wRoar = null;
 function whoosh(inward) {
   if (!ac || !noiseBuf) return;
   const t = ac.currentTime, d = inward ? dIn() : dOut();
@@ -1730,7 +1777,7 @@ function worldAudio(on) {
     const bus = ac.createGain(); bus.gain.setValueAtTime(0, t); bus.gain.linearRampToValueAtTime(1.4, t + .25); bus.connect(comp).connect(clip).connect(ac.destination);
     const loop = (fType, f, q, gain) => { const n = ac.createBufferSource(), fl = ac.createBiquadFilter(), g = ac.createGain(); n.buffer = noiseBuf; n.loop = true; fl.type = fType; fl.frequency.value = f; fl.Q.value = q; g.gain.value = gain; n.connect(fl).connect(g).connect(bus); n.start(t, Math.random()); nodes.push(n); return g; };
     // lodernde Flammen: tiefes Brausen (wogend), Fauchen, Zischen
-    const roar = loop("lowpass", 360, .7, 1.1);
+    const roar = loop("lowpass", 360, .7, 1.1); wRoar = roar;
     const lfo = ac.createOscillator(), lg = ac.createGain(); lfo.frequency.value = .6; lg.gain.value = .45; lfo.connect(lg).connect(roar.gain); lfo.start(t); nodes.push(lfo);
     loop("bandpass", 900, .6, .35); loop("highpass", 5000, .5, .05);
     // tosende Menge: viele gehaltene, zitternde "Aaah"-Stimmen, die auf- und abschwellen
@@ -1746,7 +1793,7 @@ function worldAudio(on) {
       [o, vib, wob, am].forEach(n => { n.start(t + Math.random() * .2); nodes.push(n); });
     }
     loop("bandpass", 2200, 1.2, .1);   // Gewirr vieler Stimmen
-    wAudio = { bus, nodes, id: 0 };
+    wAudio = { bus, nodes, id: 0, roar: wRoar };
     const crack = () => {
       const t0 = ac.currentTime + Math.random() * .1, sN = ac.createBufferSource(), hp = ac.createBiquadFilter(), cg = ac.createGain();
       sN.buffer = noiseBuf; hp.type = "highpass"; hp.frequency.value = rand(700, 3000);
@@ -1783,6 +1830,7 @@ cv.addEventListener("pointerdown", e => {
 });
 cv.addEventListener("pointermove", e => {
   if (e.pointerId !== pid) return;
+  lastFingerMove = performance.now();
   const pt = toFrame(e);
   if (Math.hypot(pt.x - downPt.x, pt.y - downPt.y) > 8) moved = true;
   if (mode === "finger") fingerX = Math.max(burnEnd, Math.min(fingerX, pt.x + radius(bx) * .2));
