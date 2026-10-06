@@ -21,25 +21,20 @@
 html, body { height: 100%; }
 body { background: var(--bg); color: var(--ink); font-family: var(--body); overflow: hidden; -webkit-user-select: none; user-select: none; touch-action: none; -webkit-touch-callout: none; }
 canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
-.ui { position: fixed; top: calc(env(safe-area-inset-top, 0px) + 12px); right: 16px; display: flex; gap: 8px; z-index: 3; transition: opacity .6s; }
-.ui.dim { opacity: .15; }
-.ui { flex-direction: column; align-items: flex-end; max-width: calc(100% - 32px); }
-.ui.open { opacity: 1; }
-.menu { width: min(330px, calc(100vw - 32px)); max-height: calc(100vh - 80px); overflow-y: auto; background: rgba(20,18,16,.92); border: 1px solid rgba(255,255,255,.12); border-radius: 18px; padding: 14px; display: flex; flex-direction: column; gap: 14px; -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); }
-.menu .row { display: flex; flex-wrap: wrap; gap: 8px; }
-.menu .group { display: flex; flex-direction: column; gap: 8px; }
-.menu .lbl, .menu label { font-size: 11px; text-transform: uppercase; letter-spacing: .1em; color: var(--muted); }
+html, body { margin: 0; }
+[hidden] { display: none !important; }
+.settings { width: min(420px, 100%); display: flex; flex-direction: column; gap: 12px; text-align: left; background: rgba(20,18,16,.8); border: 1px solid rgba(255,255,255,.12); border-radius: 18px; padding: 14px; }
+.settings .row { display: flex; flex-wrap: wrap; gap: 8px; }
+.settings .group { display: flex; flex-direction: column; gap: 6px; }
+.settings .lbl, .settings label { font-size: 11px; text-transform: uppercase; letter-spacing: .1em; color: var(--muted); }
 .seg { display: flex; gap: 6px; flex-wrap: wrap; }
+.settings button { font: 600 13px var(--body); color: var(--ink); background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.14); border-radius: 999px; padding: 8px 14px; cursor: pointer; }
 .seg button[aria-checked="true"] { background: var(--ember); color: #1a0d04; border-color: var(--ember); }
-.menu input[type=range] { width: 100%; accent-color: var(--ember); }
-.meter { position: relative; height: 8px; border-radius: 4px; background: rgba(255,255,255,.08); overflow: hidden; }
-.meter i { position: absolute; inset: 0 auto 0 0; width: 0; background: var(--ember); }
-.meter b { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--ink); }
+.settings input[type=range] { width: 100%; accent-color: var(--ember); }
 .cue { position: fixed; left: 50%; bottom: calc(env(safe-area-inset-bottom, 0px) + 18px); transform: translateX(-50%); z-index: 2; font: 600 15px var(--body); color: var(--ink); background: rgba(20,18,16,.75); border: 1px solid rgba(255,255,255,.12); border-radius: 999px; padding: 8px 16px; white-space: nowrap; pointer-events: none; }
-.status { margin: 0; font-size: 13px; line-height: 1.4; color: var(--ink); }
+.status { margin: 0; font-size: 13px; line-height: 1.4; color: var(--ink) !important; }
 .status:empty { display: none; }
-.ui button { font: 600 13px var(--body); color: var(--ink); background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.14); border-radius: 999px; padding: 8px 14px; cursor: pointer; }
-.overlay { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; text-align: center; padding-inline: 16px; z-index: 2; background: radial-gradient(ellipse at center, rgba(11,10,9,.35), rgba(11,10,9,.85)); transition: opacity .8s; }
+.overlay { position: fixed; inset: 0; overflow-y: auto; padding-block: 24px; display: flex; flex-direction: column; align-items: center; justify-content: safe center; gap: 14px; text-align: center; padding-inline: 16px; z-index: 2; background: radial-gradient(ellipse at center, rgba(11,10,9,.35), rgba(11,10,9,.85)); transition: opacity .8s; }
 .overlay.gone { opacity: 0; pointer-events: none; }
 .overlay h1 { font-family: var(--display); font-weight: 600; font-size: clamp(30px, 7vw, 56px); margin: 0; line-height: 1; letter-spacing: -.01em; }
 .overlay p { margin: 0; color: var(--muted); max-width: 40ch; line-height: 1.45; font-size: 15px; }
@@ -50,27 +45,22 @@ button:focus-visible { outline: 2px solid var(--ember); outline-offset: 3px; }
 <body>
 <canvas id="c"></canvas>
 
-<div class="ui" id="ui">
-  <button id="menuBtn" aria-expanded="false" aria-controls="menu">☰ Menü</button>
-  <div class="menu" id="menu" hidden>
-    <div class="row">
-      <button id="flip" title="Filter auf die andere Seite">⇄ Seite wechseln</button>
-      <button id="fs" title="Vollbild">⛶ Vollbild</button>
-    </div>
+<div class="cue" id="cue" hidden></div>
+
+<div class="overlay" id="start">
+  <h1>Handy-Joint</h1>
+  <p id="help"></p>
+  <button class="go" id="light">🔥 Anzünden</button>
+  <div class="settings">
     <div class="group">
       <span class="lbl">Ziehen mit</span>
       <div class="seg" role="radiogroup">
         <button id="modeFinger" role="radio" aria-checked="true">Finger</button>
         <button id="modeBreath" role="radio" aria-checked="false">Atem (Mikrofon)</button>
       </div>
-      <div id="breathOpts" hidden>
-        <label for="micSens">Mikrofon-Empfindlichkeit</label>
-        <input type="range" id="micSens" min="0" max="100" value="55">
-        <div class="meter"><i id="micMeter"></i><b id="micThr"></b></div>
-      </div>
     </div>
     <div class="group">
-      <span class="lbl">Abaschen durch Klopfen</span>
+      <span class="lbl">Asche abklopfen</span>
       <div class="seg" role="radiogroup">
         <button id="knockOff" role="radio" aria-checked="true">Aus</button>
         <button id="knockOn" role="radio" aria-checked="false">An (Bewegungssensor)</button>
@@ -80,16 +70,12 @@ button:focus-visible { outline: 2px solid var(--ember); outline-offset: 3px; }
         <input type="range" id="knockSens" min="0" max="100" value="55">
       </div>
     </div>
+    <div class="row">
+      <button id="flip" title="Filter auf die andere Seite">⇄ Filter links/rechts</button>
+      <button id="fs" title="Vollbild">⛶ Vollbild</button>
+    </div>
     <p class="status" id="status"></p>
   </div>
-</div>
-
-<div class="cue" id="cue" hidden></div>
-
-<div class="overlay" id="start">
-  <h1>Handy-Joint</h1>
-  <p>Der Joint liegt diagonal über dem Display. Die Handyecke mit dem Filter (unten rechts) an die Lippen. Zum Ziehen den Finger auf die Glut legen und am Joint entlang Richtung Mundstück wischen. Er brennt so weit ab, wie du ziehst. Loslassen zum Ausatmen. Kurz auf die Asche tippen zum Abaschen. Im Menü kannst du auf Atem-Steuerung per Mikrofon und Abaschen durch Klopfen umstellen.</p>
-  <button class="go" id="light">🔥 Anzünden</button>
 </div>
 
 <div class="overlay gone" id="end">
@@ -484,7 +470,7 @@ function render(t) {
   }
 
   // Hinweis, solange noch keiner gezogen hat
-  if (state === "lit" && !drawing && totalDrags < 2) {
+  if (state === "lit" && mode === "finger" && !drawing && totalDrags < 2) {
     const ph = (t * .55) % 1, hx = bx - ph * L * .3, R2 = radius(hx);
     ctx.save(); ctx.globalCompositeOperation = "lighter";
     const ha = Math.sin(Math.PI * ph) * .5;
@@ -516,6 +502,21 @@ function render(t) {
   ctx.restore();
   ctx.setTransform(base);
 
+  // grüner Wisch-Schweif (Mikro-Empfindlichkeit)
+  const nowMs = performance.now();
+  trail = trail.filter(q => nowMs - q.t < 650);
+  if (trail.length > 1) {
+    ctx.save(); ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.lineCap = "round"; ctx.lineJoin = "round"; ctx.globalCompositeOperation = "lighter";
+    for (let i = 1; i < trail.length; i++) {
+      const k = Math.pow(1 - (nowMs - trail[i].t) / 650, .7);
+      ctx.strokeStyle = `rgba(60,255,120,${k * .35})`; ctx.lineWidth = 26 * k + 4;
+      ctx.beginPath(); ctx.moveTo(trail[i - 1].x, trail[i - 1].y); ctx.lineTo(trail[i].x, trail[i].y); ctx.stroke();
+      ctx.strokeStyle = `rgba(190,255,210,${k})`; ctx.lineWidth = 7 * k + 1;
+      ctx.beginPath(); ctx.moveTo(trail[i - 1].x, trail[i - 1].y); ctx.lineTo(trail[i].x, trail[i].y); ctx.stroke();
+    }
+    ctx.restore(); ctx.setTransform(base);
+  }
+
   // Dunst nach ein paar Zügen
   if (haze > .01) {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -539,7 +540,7 @@ function update(dt, t) {
     const span = burnStart - burnEnd;
     bx -= span * dt * 0.0018;                       // glimmt von selbst ganz langsam
     if (drawing && mode === "finger" && fingerX < bx) bx += (fingerX - bx) * Math.min(1, dt * 7);  // brennt bis zum Finger
-    if (drawing && mode === "breath") bx -= span * dt * .05 * micInt;                          // brennt, solange Luft gezogen wird
+    if (drawing && mode === "breath") bx -= span * dt * .035 * micInt;                          // brennt, solange Luft gezogen wird
     if (drawing) { drawTime += dt; haze = Math.min(1.2, haze + dt * .035); }
     if (bx <= burnEnd) { bx = burnEnd; finish(); }
     // Asche bricht irgendwann von selbst ab
@@ -603,7 +604,7 @@ function flick(byHand) {
 }
 
 function finish() {
-  state = "out"; drawing = false; pid = null; heat = 0; breathState = "idle"; setCue("");
+  state = "out"; drawing = false; pid = null; heat = 0; breathState = "idle"; setCue(""); stopMic();
   if (ac) { crackleGain.gain.setTargetAtTime(0, ac.currentTime, .1); hissGain.gain.setTargetAtTime(0, ac.currentTime, .1); }
   document.getElementById("endtxt").textContent = `${totalDrags} ${totalDrags === 1 ? "Zug" : "Züge"}. Nur noch Crutch übrig.`;
   setTimeout(() => document.getElementById("end").classList.remove("gone"), 1400);
@@ -613,46 +614,61 @@ function finish() {
 // Finger an die Glut legen und am Joint entlang Richtung Mundstück ziehen; loslassen = ausatmen
 let downAt = 0, downPt = null, pid = null, fingerX = 0, drawFrom = 0, moved = false;
 const toFrame = e => frameInv.transformPoint(new DOMPoint(e.clientX, e.clientY));
+let swipeX = 0, trail = [];
+const nearTip = pt => { const R = radius(bx); return !(pt.x < bx - R * 2.5 || pt.x > ashStart + R * 2 || Math.abs(pt.y) > R * 3.2); };
 cv.addEventListener("pointerdown", e => {
   initAudio(); if (ac && ac.state === "suspended") ac.resume();
-  wakeUi();
   if (state !== "lit" || pid !== null) return;
-  const pt = toFrame(e), R = radius(bx);
-  // nur an der Spitze (Glut/Asche) geht's los
-  if (pt.x < bx - R * 2.5 || pt.x > ashStart + R * 2 || Math.abs(pt.y) > R * 3.2) return;
+  const pt = toFrame(e);
+  if (mode === "finger" && !nearTip(pt)) return;   // Ziehen startet nur an der Glut
   pid = e.pointerId; downAt = performance.now(); downPt = pt; moved = false;
   try { cv.setPointerCapture(pid); } catch (er) {}
-  drawing = mode === "finger"; drawTime = 0; drawFrom = bx; fingerX = bx;
+  if (mode === "finger") { drawing = true; drawTime = 0; drawFrom = bx; fingerX = bx; }
+  else { swipeX = pt.x; trail.push({ x: e.clientX, y: e.clientY, t: performance.now() }); }
 });
 cv.addEventListener("pointermove", e => {
   if (e.pointerId !== pid) return;
   const pt = toFrame(e);
   if (Math.hypot(pt.x - downPt.x, pt.y - downPt.y) > 8) moved = true;
-  fingerX = Math.max(burnEnd, Math.min(fingerX, pt.x + radius(bx) * .2));
+  if (mode === "finger") { fingerX = Math.max(burnEnd, Math.min(fingerX, pt.x + radius(bx) * .2)); return; }
+  // Richtung Mundstück (−x) = unempfindlicher, Richtung Glut (+x) = empfindlicher
+  micSens = clamp(micSens + (pt.x - swipeX) / (L * .7) * 100, 0, 100); swipeX = pt.x;
+  trail.push({ x: e.clientX, y: e.clientY, t: performance.now() });
 });
 const release = e => {
   if (e.pointerId !== pid) return;
   pid = null;
   const quick = performance.now() - downAt < 300 && !moved;
   if (mode === "finger") drawing = false;
-  if (quick && downPt.x > bx && ashStart - bx > radius(bx) * .4) { flick(true); return; }
-  if (mode !== "finger") return;
+  if (quick && downPt.x > bx && nearTip(downPt) && ashStart - bx > radius(bx) * .4) { flick(true); return; }
+  if (mode !== "finger") { store.set("micSens", Math.round(micSens)); return; }
   const burnt = drawFrom - bx;
   if (burnt > r1 * .3 || drawTime > .6) { totalDrags++; exhale(clamp(.55 + burnt / (L * .12), .55, 1.3)); }
 };
 cv.addEventListener("pointerup", release); cv.addEventListener("pointercancel", release);
 cv.addEventListener("contextmenu", e => e.preventDefault());
 
-document.getElementById("light").onclick = () => {
+document.getElementById("light").onclick = async () => {
   initAudio(); if (ac && ac.state === "suspended") ac.resume();
+  const motionP = prefKnock ? requestMotion() : Promise.resolve(false);
+  if (prefMode === "breath") {
+    status("Mikrofon wird angefragt …");
+    if (!await startMic()) { status("Kein Mikrofon-Zugriff. Erlaube das Mikrofon für diese Seite (in der Claude-Vorschau geht es nicht) oder wähle Finger."); return; }
+  }
+  if (prefKnock) {
+    if (!await motionP) { stopMic(); status("Kein Zugriff auf den Bewegungssensor. Erlaube „Bewegung & Ausrichtung“ oder schalte Klopfen aus."); return; }
+    lastAcc = null; knockThr = 6 - $("knockSens").value * .052;   // 0.8 … 6 m/s² Sprung zwischen zwei Messungen
+    addEventListener("devicemotion", onMotion);
+  }
+  mode = prefMode; knock = prefKnock; status("");
   document.getElementById("start").classList.add("gone");
   state = "lighting"; lightT = 0;
   try { navigator.wakeLock && navigator.wakeLock.request("screen").catch(() => {}); } catch (e) {}
-  wakeUi();
 };
 document.getElementById("again").onclick = () => {
   document.getElementById("end").classList.add("gone");
   bx = burnStart; ashStart = bx; heat = 0; totalDrags = 0; smoke = []; ashFall = [];
+  stopMic(); removeEventListener("devicemotion", onMotion); mode = "finger"; knock = false;
   state = "unlit";
   document.getElementById("start").classList.remove("gone");
 };
@@ -661,47 +677,50 @@ document.getElementById("fs").onclick = () => {
   const el = document.documentElement;
   try { (document.fullscreenElement ? document.exitFullscreen() : (el.requestFullscreen || el.webkitRequestFullscreen).call(el))?.catch?.(() => {}); } catch (e) {}
 };
-// ---------- Menü & Einstellungen ----------
+// ---------- Einstellungen (nur im Startbildschirm, gelten für die ganze Runde) ----------
 const $ = id => document.getElementById(id);
-let mode = "finger", knock = false;
 const store = { get(k, d) { try { const v = localStorage.getItem("joint." + k); return v === null ? d : v; } catch (e) { return d; } },
                 set(k, v) { try { localStorage.setItem("joint." + k, v); } catch (e) {} } };
-$("micSens").value = store.get("micSens", 55); $("knockSens").value = store.get("knockSens", 55);
-$("micSens").oninput = () => store.set("micSens", $("micSens").value);
+let mode = "finger", knock = false;
+let prefMode = store.get("mode", "finger"), prefKnock = store.get("knock", "0") === "1";
+let micSens = +store.get("micSens", 40);      // wird im Spiel per Wischen am Joint verstellt
+$("knockSens").value = store.get("knockSens", 55);
 $("knockSens").oninput = () => store.set("knockSens", $("knockSens").value);
 const status = t => { $("status").textContent = t || ""; };
-let menuOpen = false;
-$("menuBtn").onclick = () => {
-  menuOpen = !menuOpen; $("menu").hidden = !menuOpen;
-  $("menuBtn").setAttribute("aria-expanded", menuOpen); $("ui").classList.toggle("open", menuOpen); wakeUi();
-};
 function setSeg(a, b, on) { $(a).setAttribute("aria-checked", !on); $(b).setAttribute("aria-checked", on); }
+const HELP = {
+  finger: "Handyecke mit dem Filter an die Lippen. Finger auf die Glut legen und am Joint entlang Richtung Mundstück wischen, er brennt so weit ab, wie du ziehst. Loslassen zum Ausatmen. Kurz auf die Asche tippen zum Abaschen.",
+  breath: "Handyecke mit dem Filter an die Lippen. Hörbar Luft einziehen, der Joint brennt, solange du ziehst. Dann reinpusten zum Ausatmen. Wischen am Joint stellt das Mikro ein: Richtung Mundstück unempfindlicher, Richtung Glut empfindlicher.",
+};
+function showPrefs() {
+  setSeg("modeFinger", "modeBreath", prefMode === "breath");
+  setSeg("knockOff", "knockOn", prefKnock); $("knockOpts").hidden = !prefKnock;
+  $("help").textContent = HELP[prefMode];
+}
+$("modeFinger").onclick = () => { prefMode = "finger"; store.set("mode", prefMode); showPrefs(); status(""); };
+$("modeBreath").onclick = () => { prefMode = "breath"; store.set("mode", prefMode); showPrefs(); status(""); };
+$("knockOff").onclick = () => { prefKnock = false; store.set("knock", "0"); showPrefs(); status(""); };
+$("knockOn").onclick = () => { prefKnock = true; store.set("knock", "1"); showPrefs(); status(""); };
+showPrefs();
 
-// Atem-Steuerung über das Mikrofon: Luftzug = rauschiges Signal, v. a. in den hohen Frequenzen
-let micStream = null, micAna = null, micBins, micFloor = 1e-7, micInt = 0, micLastOn = 0, micDb = 0;
-$("modeFinger").onclick = () => { mode = "finger"; setSeg("modeFinger", "modeBreath", false); $("breathOpts").hidden = true; stopMic(); status(""); };
-$("modeBreath").onclick = async () => {
-  initAudio(); if (ac && ac.state === "suspended") ac.resume();
-  if (!ac || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { status("Dieser Browser gibt kein Mikrofon frei."); return; }
-  status("Mikrofon wird angefragt …");
+// Atem-Steuerung über das Mikrofon
+let micStream = null, micAna = null, micBins, micFloor = 1e-7, micInt = 0, micLastOn = 0, micDb = 0, micOnTime = 0;
+async function startMic() {
+  if (!ac || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return false;
   try {
     micStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: false, autoGainControl: false } });
-  } catch (e) {
-    status("Kein Mikrofon-Zugriff. In der Claude-Vorschau ist das gesperrt: Öffne die Seite direkt im Browser über https (z. B. GitHub Pages) und erlaube das Mikrofon.");
-    return;
-  }
+  } catch (e) { return false; }
   const src = ac.createMediaStreamSource(micStream);
   micAna = ac.createAnalyser(); micAna.fftSize = 1024; micAna.smoothingTimeConstant = .5;
   micBins = new Float32Array(micAna.frequencyBinCount);
   src.connect(micAna);
-  micFloor = 1e-7; loFloor = 1e-7; breathState = "idle"; mode = "breath"; setSeg("modeFinger", "modeBreath", true); $("breathOpts").hidden = false;
-  status("Atem an. Zieh hörbar Luft ein, nah am Mikrofon (unten am Handy): Der Joint brennt, solange du ziehst. Dann kurz Luft anhalten und ins Mikro pusten, so kommt der Rauch raus.");
-};
+  micFloor = 1e-7; loFloor = 1e-7; breathState = "idle"; micOnTime = 0;
+  return true;
+}
 function stopMic() {
   if (micStream) micStream.getTracks().forEach(t => t.stop());
   micStream = null; micAna = null; micInt = 0; micBlow = 0; breathState = "idle"; setCue("");
   if (exhaleSrc === "mic") exhaleT = -1;
-  if (mode === "finger" && pid === null) drawing = false;
 }
 // Atem-Modus: idle -> draw (Luft einsaugen, Joint brennt) -> hold (Luft anhalten) -> blow (reinpusten = Rauch)
 // Pusten erzeugt am Mikro starkes Wind-Rumpeln in den tiefen Frequenzen, Ziehen eher ein helles Zischen.
@@ -721,21 +740,20 @@ function breathStep(dt) {
   if (quiet) { micFloor = track(micFloor, hi, dt); loFloor = track(loFloor, lo, dt); }
   micHi = 10 * Math.log10(hi / micFloor); micLo = 10 * Math.log10(lo / loFloor);
   micDb = Math.max(micHi, micLo);
-  const thr = 22 - $("micSens").value * .17;          // 5 … 22 dB über dem Grundrauschen
+  const thr = 22 - micSens * .17;                    // 5 … 22 dB über dem Grundrauschen
   const blowish = micLo > thr && micLo > micHi + 6;   // tiefes Wind-Rumpeln überwiegt
   const sig = micDb > thr;
   const drawRaw = clamp((micHi - thr) / 14, 0, 1);
   micInt += ((breathState === "draw" ? drawRaw : 0) - micInt) * Math.min(1, dt * 10);
   const blowRaw = clamp((micDb - thr) / 14, 0, 1.3);
   micBlow += ((breathState === "blow" ? blowRaw : 0) - micBlow) * Math.min(1, dt * 10);
-  $("micMeter").style.width = clamp(micDb / 40, 0, 1) * 100 + "%";
-  $("micThr").style.left = clamp(thr / 40, 0, 1) * 100 + "%";
   const now = performance.now();
   if (sig) micLastOn = now;
   const silentFor = now - micLastOn;
 
   if (breathState === "idle") {
-    if (sig && !blowish && state === "lit") { breathState = "draw"; drawing = true; drawTime = 0; drawFrom = bx; setCue(""); }
+    micOnTime = sig && !blowish ? micOnTime + dt : 0;
+    if (micOnTime > .12 && state === "lit") { breathState = "draw"; drawing = true; drawTime = 0; drawFrom = bx; setCue(""); }
   } else if (breathState === "draw") {
     if (silentFor > 350) {
       drawing = false;
@@ -751,47 +769,33 @@ function breathStep(dt) {
   }
 }
 
-// Klopfen auf den Rahmen = Ruck im Beschleunigungssensor
-let lastAcc = null, lastKnock = 0;
+// Klopfen auf den Rahmen = Ruck im Beschleunigungssensor; Empfindlichkeit wird beim Anzünden festgelegt
+let lastAcc = null, lastKnock = 0, knockThr = 3;
 function onMotion(e) {
   const a = e.accelerationIncludingGravity || e.acceleration;
   if (!a || a.x === null) return;
   const v = [a.x, a.y, a.z];
   if (lastAcc) {
     const jerk = Math.hypot(v[0] - lastAcc[0], v[1] - lastAcc[1], v[2] - lastAcc[2]);
-    const thr = 6 - $("knockSens").value * .052;   // 0.8 … 6 m/s² Sprung zwischen zwei Messungen
     const now = performance.now();
-    if (jerk > thr && now - lastKnock > 450) {
+    if (jerk > knockThr && now - lastKnock > 450) {
       lastKnock = now;
       if (state === "lit" && ashStart - bx > r1 * .3) flick(true);
     }
   }
   lastAcc = v;
 }
-$("knockOff").onclick = () => { knock = false; setSeg("knockOff", "knockOn", false); $("knockOpts").hidden = true; removeEventListener("devicemotion", onMotion); status(""); };
-$("knockOn").onclick = async () => {
+function requestMotion() {
+  // muss direkt im Tipp auf "Anzünden" passieren, sonst fragt das iPhone nicht
   try {
-    if (typeof DeviceMotionEvent === "undefined") throw 0;
-    if (typeof DeviceMotionEvent.requestPermission === "function") {
-      const r = await DeviceMotionEvent.requestPermission();   // iPhone fragt hier nach
-      if (r !== "granted") throw 0;
-    }
-  } catch (e) {
-    status("Kein Zugriff auf den Bewegungssensor. In der Claude-Vorschau ist das gesperrt: Öffne die Seite direkt im Browser über https und erlaube „Bewegung & Ausrichtung“.");
-    return;
-  }
-  lastAcc = null; addEventListener("devicemotion", onMotion);
-  knock = true; setSeg("knockOff", "knockOn", true); $("knockOpts").hidden = false;
-  status("Klopfen an. Tipp mit dem Finger seitlich auf den Handyrahmen, dann fällt die Asche ab.");
-  // Falls nach 2 s noch kein einziges Sensor-Ereignis kam, liefert diese Ansicht keine Daten
-  setTimeout(() => { if (knock && lastAcc === null) status("Der Bewegungssensor liefert hier keine Daten. Öffne die Seite direkt im Browser über https."); }, 2000);
-};
-
-let uiTimer;
-function wakeUi() { const u = document.getElementById("ui"); u.classList.remove("dim"); clearTimeout(uiTimer); uiTimer = setTimeout(() => { if (!menuOpen) u.classList.add("dim"); }, 3500); }
+    if (typeof DeviceMotionEvent === "undefined") return Promise.resolve(false);
+    if (typeof DeviceMotionEvent.requestPermission === "function") return DeviceMotionEvent.requestPermission().then(r => r === "granted", () => false);
+    return Promise.resolve(true);
+  } catch (e) { return Promise.resolve(false); }
+}
 
 addEventListener("resize", resize);
-resize(); wakeUi();
+resize();
 let last = performance.now();
 function loop(now) {
   const dt = Math.min(.05, (now - last) / 1000); last = now;
