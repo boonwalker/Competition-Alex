@@ -19,6 +19,20 @@ body { background: var(--bg); color: var(--ink); font-family: var(--body); overf
 canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
 .ui { position: fixed; top: calc(env(safe-area-inset-top, 0px) + 12px); right: 16px; display: flex; gap: 8px; z-index: 3; transition: opacity .6s; }
 .ui.dim { opacity: .15; }
+.ui { flex-direction: column; align-items: flex-end; max-width: calc(100% - 32px); }
+.ui.open { opacity: 1; }
+.menu { width: min(330px, calc(100vw - 32px)); max-height: calc(100vh - 80px); overflow-y: auto; background: rgba(20,18,16,.92); border: 1px solid rgba(255,255,255,.12); border-radius: 18px; padding: 14px; display: flex; flex-direction: column; gap: 14px; -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); }
+.menu .row { display: flex; flex-wrap: wrap; gap: 8px; }
+.menu .group { display: flex; flex-direction: column; gap: 8px; }
+.menu .lbl, .menu label { font-size: 11px; text-transform: uppercase; letter-spacing: .1em; color: var(--muted); }
+.seg { display: flex; gap: 6px; flex-wrap: wrap; }
+.seg button[aria-checked="true"] { background: var(--ember); color: #1a0d04; border-color: var(--ember); }
+.menu input[type=range] { width: 100%; accent-color: var(--ember); }
+.meter { position: relative; height: 8px; border-radius: 4px; background: rgba(255,255,255,.08); overflow: hidden; }
+.meter i { position: absolute; inset: 0 auto 0 0; width: 0; background: var(--ember); }
+.meter b { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--ink); }
+.status { margin: 0; font-size: 13px; line-height: 1.4; color: var(--ink); }
+.status:empty { display: none; }
 .ui button { font: 600 13px var(--body); color: var(--ink); background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.14); border-radius: 999px; padding: 8px 14px; cursor: pointer; }
 .overlay { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; text-align: center; padding-inline: 16px; z-index: 2; background: radial-gradient(ellipse at center, rgba(11,10,9,.35), rgba(11,10,9,.85)); transition: opacity .8s; }
 .overlay.gone { opacity: 0; pointer-events: none; }
@@ -31,13 +45,42 @@ button:focus-visible { outline: 2px solid var(--ember); outline-offset: 3px; }
 <canvas id="c"></canvas>
 
 <div class="ui" id="ui">
-  <button id="flip" title="Filter auf die andere Seite">⇄ Seite</button>
-  <button id="fs" title="Vollbild">⛶ Vollbild</button>
+  <button id="menuBtn" aria-expanded="false" aria-controls="menu">☰ Menü</button>
+  <div class="menu" id="menu" hidden>
+    <div class="row">
+      <button id="flip" title="Filter auf die andere Seite">⇄ Seite wechseln</button>
+      <button id="fs" title="Vollbild">⛶ Vollbild</button>
+    </div>
+    <div class="group">
+      <span class="lbl">Ziehen mit</span>
+      <div class="seg" role="radiogroup">
+        <button id="modeFinger" role="radio" aria-checked="true">Finger</button>
+        <button id="modeBreath" role="radio" aria-checked="false">Atem (Mikrofon)</button>
+      </div>
+      <div id="breathOpts" hidden>
+        <label for="micSens">Mikrofon-Empfindlichkeit</label>
+        <input type="range" id="micSens" min="0" max="100" value="55">
+        <div class="meter"><i id="micMeter"></i><b id="micThr"></b></div>
+      </div>
+    </div>
+    <div class="group">
+      <span class="lbl">Abaschen durch Klopfen</span>
+      <div class="seg" role="radiogroup">
+        <button id="knockOff" role="radio" aria-checked="true">Aus</button>
+        <button id="knockOn" role="radio" aria-checked="false">An (Bewegungssensor)</button>
+      </div>
+      <div id="knockOpts" hidden>
+        <label for="knockSens">Klopf-Empfindlichkeit</label>
+        <input type="range" id="knockSens" min="0" max="100" value="55">
+      </div>
+    </div>
+    <p class="status" id="status"></p>
+  </div>
 </div>
 
 <div class="overlay" id="start">
   <h1>Handy-Joint</h1>
-  <p>Der Joint liegt diagonal über dem Display. Die Handyecke mit dem Filter (unten rechts) an die Lippen. Zum Ziehen den Finger auf die Glut legen und am Joint entlang Richtung Mundstück wischen. Er brennt so weit ab, wie du ziehst. Loslassen zum Ausatmen. Kurz auf die Asche tippen zum Abaschen.</p>
+  <p>Der Joint liegt diagonal über dem Display. Die Handyecke mit dem Filter (unten rechts) an die Lippen. Zum Ziehen den Finger auf die Glut legen und am Joint entlang Richtung Mundstück wischen. Er brennt so weit ab, wie du ziehst. Loslassen zum Ausatmen. Kurz auf die Asche tippen zum Abaschen. Im Menü kannst du auf Atem-Steuerung per Mikrofon und Abaschen durch Klopfen umstellen.</p>
   <button class="go" id="light">🔥 Anzünden</button>
 </div>
 
@@ -480,17 +523,20 @@ function update(dt, t) {
     if (lightT > 1.4) state = "lit";
   }
   if (state === "lit") {
-    heat += ((drawing ? (bx - fingerX > 2 ? 1.1 : .75) : 0) - heat) * dt * (drawing ? 3 : 1.3);
+    if (mode === "breath") breathStep(dt);
+    const hTarget = !drawing ? 0 : mode === "breath" ? .6 + micInt * .5 : (bx - fingerX > 2 ? 1.1 : .75);
+    heat += (hTarget - heat) * dt * (drawing ? 3 : 1.3);
     const span = burnStart - burnEnd;
     bx -= span * dt * 0.0018;                       // glimmt von selbst ganz langsam
-    if (drawing && fingerX < bx) bx += (fingerX - bx) * Math.min(1, dt * 7);  // brennt bis zum Finger
+    if (drawing && mode === "finger" && fingerX < bx) bx += (fingerX - bx) * Math.min(1, dt * 7);  // brennt bis zum Finger
+    if (drawing && mode === "breath") bx -= span * dt * .05 * micInt;                          // brennt, solange Luft gezogen wird
     if (drawing) { drawTime += dt; haze = Math.min(1.2, haze + dt * .035); }
     if (bx <= burnEnd) { bx = burnEnd; finish(); }
     // Asche bricht irgendwann von selbst ab
     if (ashStart - bx > R * ashLimit) flick(false);
     if (ac) {
-      crackleGain.gain.setTargetAtTime(drawing ? .55 : .04, ac.currentTime, .08);
-      hissGain.gain.setTargetAtTime(drawing ? .045 : 0, ac.currentTime, .12);
+      crackleGain.gain.setTargetAtTime(drawing ? (mode === "breath" ? .2 : .55) : .04, ac.currentTime, .08);
+      hissGain.gain.setTargetAtTime(drawing && mode === "finger" ? .045 : 0, ac.currentTime, .12);
     }
   }
   haze = Math.max(0, haze - dt * .008);
@@ -566,7 +612,7 @@ cv.addEventListener("pointerdown", e => {
   if (pt.x < bx - R * 2.5 || pt.x > ashStart + R * 2 || Math.abs(pt.y) > R * 3.2) return;
   pid = e.pointerId; downAt = performance.now(); downPt = pt; moved = false;
   try { cv.setPointerCapture(pid); } catch (er) {}
-  drawing = true; drawTime = 0; drawFrom = bx; fingerX = bx;
+  drawing = mode === "finger"; drawTime = 0; drawFrom = bx; fingerX = bx;
 });
 cv.addEventListener("pointermove", e => {
   if (e.pointerId !== pid) return;
@@ -578,8 +624,9 @@ const release = e => {
   if (e.pointerId !== pid) return;
   pid = null;
   const quick = performance.now() - downAt < 300 && !moved;
-  drawing = false;
+  if (mode === "finger") drawing = false;
   if (quick && downPt.x > bx && ashStart - bx > radius(bx) * .4) { flick(true); return; }
+  if (mode !== "finger") return;
   const burnt = drawFrom - bx;
   if (burnt > r1 * .3 || drawTime > .6) { totalDrags++; exhale(clamp(.55 + burnt / (L * .12), .55, 1.3)); }
 };
@@ -604,8 +651,111 @@ document.getElementById("fs").onclick = () => {
   const el = document.documentElement;
   try { (document.fullscreenElement ? document.exitFullscreen() : (el.requestFullscreen || el.webkitRequestFullscreen).call(el))?.catch?.(() => {}); } catch (e) {}
 };
+// ---------- Menü & Einstellungen ----------
+const $ = id => document.getElementById(id);
+let mode = "finger", knock = false;
+const store = { get(k, d) { try { const v = localStorage.getItem("joint." + k); return v === null ? d : v; } catch (e) { return d; } },
+                set(k, v) { try { localStorage.setItem("joint." + k, v); } catch (e) {} } };
+$("micSens").value = store.get("micSens", 55); $("knockSens").value = store.get("knockSens", 55);
+$("micSens").oninput = () => store.set("micSens", $("micSens").value);
+$("knockSens").oninput = () => store.set("knockSens", $("knockSens").value);
+const status = t => { $("status").textContent = t || ""; };
+let menuOpen = false;
+$("menuBtn").onclick = () => {
+  menuOpen = !menuOpen; $("menu").hidden = !menuOpen;
+  $("menuBtn").setAttribute("aria-expanded", menuOpen); $("ui").classList.toggle("open", menuOpen); wakeUi();
+};
+function setSeg(a, b, on) { $(a).setAttribute("aria-checked", !on); $(b).setAttribute("aria-checked", on); }
+
+// Atem-Steuerung über das Mikrofon: Luftzug = rauschiges Signal, v. a. in den hohen Frequenzen
+let micStream = null, micAna = null, micBins, micFloor = 1e-7, micInt = 0, micLastOn = 0, micDb = 0;
+$("modeFinger").onclick = () => { mode = "finger"; setSeg("modeFinger", "modeBreath", false); $("breathOpts").hidden = true; stopMic(); status(""); };
+$("modeBreath").onclick = async () => {
+  initAudio(); if (ac && ac.state === "suspended") ac.resume();
+  if (!ac || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { status("Dieser Browser gibt kein Mikrofon frei."); return; }
+  status("Mikrofon wird angefragt …");
+  try {
+    micStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: false, autoGainControl: false } });
+  } catch (e) {
+    status("Kein Mikrofon-Zugriff. In der Claude-Vorschau ist das gesperrt: Öffne die Seite direkt im Browser über https (z. B. GitHub Pages) und erlaube das Mikrofon.");
+    return;
+  }
+  const src = ac.createMediaStreamSource(micStream);
+  micAna = ac.createAnalyser(); micAna.fftSize = 1024; micAna.smoothingTimeConstant = .5;
+  micBins = new Float32Array(micAna.frequencyBinCount);
+  src.connect(micAna);
+  micFloor = 1e-7; mode = "breath"; setSeg("modeFinger", "modeBreath", true); $("breathOpts").hidden = false;
+  status("Atem an. Mach ein Ziehgeräusch ins Mikrofon (unten am Handy), der Joint brennt, solange du ziehst. Pause = ausatmen.");
+};
+function stopMic() {
+  if (micStream) micStream.getTracks().forEach(t => t.stop());
+  micStream = null; micAna = null; micInt = 0;
+  if (mode === "finger" && pid === null) drawing = false;
+}
+function breathStep(dt) {
+  if (!micAna) return;
+  micAna.getFloatFrequencyData(micBins);
+  const hz = ac.sampleRate / micAna.fftSize;
+  let hi = 0;
+  for (let i = Math.floor(1200 / hz); i < Math.min(micBins.length, Math.floor(9000 / hz)); i++) hi += Math.pow(10, micBins[i] / 10);
+  // Grundrauschen langsam mitführen (nicht während der eigene Ausatem-Sound läuft)
+  const playing = exhaleT >= 0;
+  if (!playing) micFloor = hi < micFloor ? micFloor + (hi - micFloor) * Math.min(1, dt * 3) : micFloor * (1 + dt * .08);
+  micFloor = Math.max(micFloor, 1e-9);
+  micDb = 10 * Math.log10(hi / micFloor);
+  const thr = 22 - $("micSens").value * .17;   // 5 … 22 dB über dem Grundrauschen
+  const raw = playing ? 0 : clamp((micDb - thr) / 14, 0, 1);
+  micInt += (raw - micInt) * Math.min(1, dt * 10);
+  $("micMeter").style.width = clamp(micDb / 40, 0, 1) * 100 + "%";
+  $("micThr").style.left = clamp(thr / 40, 0, 1) * 100 + "%";
+  const now = performance.now();
+  if (micInt > .08) micLastOn = now;
+  if (!drawing && micInt > .12) { drawing = true; drawTime = 0; drawFrom = bx; }
+  else if (drawing && now - micLastOn > 350) {
+    drawing = false;
+    const burnt = drawFrom - bx;
+    if (burnt > r1 * .3 || drawTime > .6) { totalDrags++; exhale(clamp(.55 + burnt / (L * .12), .55, 1.3)); }
+  }
+}
+
+// Klopfen auf den Rahmen = Ruck im Beschleunigungssensor
+let lastAcc = null, lastKnock = 0;
+function onMotion(e) {
+  const a = e.accelerationIncludingGravity || e.acceleration;
+  if (!a || a.x === null) return;
+  const v = [a.x, a.y, a.z];
+  if (lastAcc) {
+    const jerk = Math.hypot(v[0] - lastAcc[0], v[1] - lastAcc[1], v[2] - lastAcc[2]);
+    const thr = 6 - $("knockSens").value * .052;   // 0.8 … 6 m/s² Sprung zwischen zwei Messungen
+    const now = performance.now();
+    if (jerk > thr && now - lastKnock > 450) {
+      lastKnock = now;
+      if (state === "lit" && ashStart - bx > r1 * .3) flick(true);
+    }
+  }
+  lastAcc = v;
+}
+$("knockOff").onclick = () => { knock = false; setSeg("knockOff", "knockOn", false); $("knockOpts").hidden = true; removeEventListener("devicemotion", onMotion); status(""); };
+$("knockOn").onclick = async () => {
+  try {
+    if (typeof DeviceMotionEvent === "undefined") throw 0;
+    if (typeof DeviceMotionEvent.requestPermission === "function") {
+      const r = await DeviceMotionEvent.requestPermission();   // iPhone fragt hier nach
+      if (r !== "granted") throw 0;
+    }
+  } catch (e) {
+    status("Kein Zugriff auf den Bewegungssensor. In der Claude-Vorschau ist das gesperrt: Öffne die Seite direkt im Browser über https und erlaube „Bewegung & Ausrichtung“.");
+    return;
+  }
+  lastAcc = null; addEventListener("devicemotion", onMotion);
+  knock = true; setSeg("knockOff", "knockOn", true); $("knockOpts").hidden = false;
+  status("Klopfen an. Tipp mit dem Finger seitlich auf den Handyrahmen, dann fällt die Asche ab.");
+  // Falls nach 2 s noch kein einziges Sensor-Ereignis kam, liefert diese Ansicht keine Daten
+  setTimeout(() => { if (knock && lastAcc === null) status("Der Bewegungssensor liefert hier keine Daten. Öffne die Seite direkt im Browser über https."); }, 2000);
+};
+
 let uiTimer;
-function wakeUi() { const u = document.getElementById("ui"); u.classList.remove("dim"); clearTimeout(uiTimer); uiTimer = setTimeout(() => u.classList.add("dim"), 3500); }
+function wakeUi() { const u = document.getElementById("ui"); u.classList.remove("dim"); clearTimeout(uiTimer); uiTimer = setTimeout(() => { if (!menuOpen) u.classList.add("dim"); }, 3500); }
 
 addEventListener("resize", resize);
 resize(); wakeUi();
