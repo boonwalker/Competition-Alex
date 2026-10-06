@@ -82,6 +82,12 @@ button:focus-visible { outline: 2px solid var(--ember); outline-offset: 3px; }
       <button id="flip" title="Filter auf die andere Seite">⇄ Filter links/rechts</button>
       <button id="fs" title="Vollbild">⛶ Vollbild</button>
       <button id="music" aria-pressed="false">♫ Musik: aus</button>
+      <button id="musicPick" type="button">♫ Eigene Musik wählen</button>
+      <input type="file" id="musicFile" accept="audio/*" hidden>
+    </div>
+    <div class="row" id="musicInfoRow" hidden>
+      <span class="status" id="musicInfo"></span>
+      <button id="musicClear" type="button">Eigene Musik entfernen</button>
     </div>
     <p class="status" id="status"></p>
   </div>
@@ -468,6 +474,8 @@ function musicBuild() {
 }
 function musicGate(open) {
   if (!ac || open === mGate) return;
+  if (customBlob && !customBuf) { decodeCustom(); return; }   // eigene Musik lädt noch: nicht die erzeugte einspringen lassen
+  if (customBuf) { open ? customStart() : customStop(); mGate = open; return; }
   if (mAc !== ac) musicBuild();
   const now = ac.currentTime;
   if (open) {
@@ -483,7 +491,7 @@ function musicGate(open) {
   }
   mGate = open;
 }
-function musicStop() { musicGate(false); clearInterval(mTimer); mTimer = null; }
+function musicStop() { musicGate(false); customStop(); clearInterval(mTimer); mTimer = null; }
 function musicTick() {
   if (!ac || ac.state !== "running" || !mGate) return;
   if (mAc !== ac) { musicBuild(); return; }
@@ -545,8 +553,69 @@ function musicStep(step, t) {
     const end = tt + dur + .25; o.start(tt); o2.start(tt); lfo.start(tt); o.stop(end); o2.stop(end); lfo.stop(end);
   }
 }
+// ---------- Eigene Musik: liegt nur lokal auf dem Gerät (IndexedDB), wird nie hochgeladen ----------
+const SNIP = 10;   // Sekunden pro Schnipsel
+let customBlob = null, customBuf = null, customName = "", cSrc = null, cGain = null, cFilter = null, cAc = null, lastSnip = -1;
+function idb() {
+  return new Promise((res, rej) => { try { const r = indexedDB.open("handy-joint", 1); r.onupgradeneeded = () => r.result.createObjectStore("files"); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); } catch (e) { rej(e); } });
+}
+async function idbPut(k, v) { const db = await idb(); return new Promise((res, rej) => { const tx = db.transaction("files", "readwrite"); tx.objectStore("files").put(v, k); tx.oncomplete = res; tx.onerror = () => rej(tx.error); }); }
+async function idbGet(k) { const db = await idb(); return new Promise((res, rej) => { const r = db.transaction("files").objectStore("files").get(k); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); }); }
+async function idbDel(k) { const db = await idb(); return new Promise(res => { const tx = db.transaction("files", "readwrite"); tx.objectStore("files").delete(k); tx.oncomplete = res; tx.onerror = res; }); }
+function showCustom(msg) {
+  document.getElementById("musicInfoRow").hidden = !customBlob && !msg;
+  document.getElementById("musicClear").hidden = !customBlob;
+  const n = customBuf ? Math.ceil(customBuf.duration / SNIP) : 0;
+  document.getElementById("musicInfo").textContent = msg || (customBlob ? `Eigene Musik: ${customName}${n ? ` · ${n} Schnipsel à ${SNIP} s, zufällig bei jedem Zug` : ""}` : "");
+}
+async function decodeCustom() {
+  if (!customBlob || customBuf || !ac) return;
+  try {
+    const raw = await customBlob.arrayBuffer();
+    customBuf = await new Promise((res, rej) => ac.decodeAudioData(raw, res, rej));
+    showCustom();
+  } catch (e) { showCustom("Diese Datei kann der Browser nicht abspielen. Probier MP3 oder M4A."); }
+}
+document.getElementById("musicPick").onclick = () => { ensureAudio(); document.getElementById("musicFile").click(); };
+document.getElementById("musicFile").onchange = async () => {
+  const f = document.getElementById("musicFile").files[0]; if (!f) return;
+  customBlob = f; customName = f.name; customBuf = null;
+  try { await idbPut("music", { blob: f, name: f.name }); } catch (e) {}
+  if (!musicOn) { musicOn = true; try { localStorage.setItem("joint.music", "1"); } catch (e) {} showMusic(); }
+  showCustom("Wird geladen …"); ensureAudio(); await decodeCustom();
+};
+document.getElementById("musicClear").onclick = async () => { customBlob = null; customBuf = null; customName = ""; try { await idbDel("music"); } catch (e) {} showCustom(); };
+idbGet("music").then(v => { if (v && v.blob) { customBlob = v.blob; customName = v.name || "Audiodatei"; showCustom(); decodeCustom(); } }).catch(() => {});
+function customStart() {
+  if (cAc !== ac) {
+    cAc = ac; cFilter = ac.createBiquadFilter(); cFilter.type = "lowpass"; cFilter.connect(ac.destination);
+  }
+  cFilter.frequency.value = musicQuiet() ? 800 : 20000;
+  cGain = ac.createGain(); cGain.connect(cFilter);
+  const now = ac.currentTime;
+  cGain.gain.setValueAtTime(0, now); cGain.gain.linearRampToValueAtTime(musicQuiet() ? .6 : 1, now + .03);
+  playSnippet(now);
+}
+function playSnippet(when) {
+  const n = Math.max(1, Math.ceil(customBuf.duration / SNIP));
+  let i = Math.floor(Math.random() * n); if (n > 1 && i === lastSnip) i = (i + 1 + Math.floor(Math.random() * (n - 1))) % n;
+  lastSnip = i;
+  const off = i * SNIP, len = Math.min(SNIP, customBuf.duration - off);
+  const src = ac.createBufferSource(); src.buffer = customBuf; src.connect(cGain);
+  src.start(when, off, len);
+  src.onended = () => { if (cSrc === src && mGate) playSnippet(ac.currentTime); };   // länger gezogen: nächster zufälliger Schnipsel
+  cSrc = src;
+}
+function customStop() {
+  if (!cGain) return;
+  const now = ac.currentTime, g = cGain, s0 = cSrc;
+  g.gain.cancelScheduledValues(now); g.gain.setValueAtTime(g.gain.value, now); g.gain.linearRampToValueAtTime(0, now + .03);   // sofort, aber ohne Knacken
+  cSrc = null; cGain = null;
+  if (s0) { s0.onended = null; try { s0.stop(now + .05); } catch (e) {} }
+}
+
 function showMusic() { const b = document.getElementById("music"); b.textContent = musicOn ? "♫ Musik: an" : "♫ Musik: aus"; b.setAttribute("aria-pressed", musicOn); }
-showMusic();
+showMusic(); showCustom();
 document.getElementById("music").onclick = () => {
   ensureAudio(); musicOn = !musicOn;
   try { localStorage.setItem("joint.music", musicOn ? "1" : "0"); } catch (e) {}
@@ -1592,7 +1661,7 @@ cv.addEventListener("pointerup", release); cv.addEventListener("pointercancel", 
 cv.addEventListener("contextmenu", e => e.preventDefault());
 
 document.getElementById("light").onclick = async () => {
-  ensureAudio();
+  ensureAudio(); decodeCustom();
   const motionP = requestMotion();   // auch ohne Klopfen: für die Neigung der Glutwelt
   if (prefMode === "breath") {
     status("Mikrofon wird angefragt …");
