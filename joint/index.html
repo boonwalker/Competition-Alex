@@ -1226,7 +1226,10 @@ function update(dt, t) {
   }
   diveUpdate(dt);
   if (state === "lit") {
-    if (mode === "breath") breathStep(dt);
+    // während ein Video läuft (und beim Rückflug), hört das Mikro Video und Musik: Ziehen ruht so lange
+    const tripHold = trip.on && trip.phase !== "in";
+    if (tripHold) { if (breathState !== "idle" || drawing) { drawing = false; breathState = "idle"; micLastOn = 0; } musicOffAt = performance.now(); }
+    else if (mode === "breath") breathStep(dt);
     const fb = fingerBurning(), dr = drawing || fb;
     const hTarget = dive.session && !dr ? .85 : fb ? 1.1 : !drawing ? 0 : mode === "breath" ? .6 + micInt * .5 : .75;
     heat += (hTarget - heat) * dt * (dr ? 3 : 1.3);
