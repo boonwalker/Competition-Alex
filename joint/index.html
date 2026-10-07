@@ -3007,9 +3007,13 @@ document.getElementById("again").onclick = () => {
   document.getElementById("end").classList.add("gone");
   dive.session = false; world = null;
   bx = burnStart; ashStart = bx; heat = 0; totalDrags = 0; smoke = []; ashFall = []; flakes = []; smears = []; sparks = []; stubPose = null;
+  // alles vom Ausdrücken zurücksetzen: Stauchung, Knicke, Falten, Riss, Lage – im Hintergrund liegt wieder ein frischer, unversehrter Joint
+  stubC = 0; stubT = 0; stubKinks = []; stubWr = []; stubTear = null; curveY = null; curveTh = null; crushClumps = []; crushXtal = []; crushFlaps = []; crushCl = [];
+  haze = 0; exhaleT = -1; exhaleLvl = 0; lungs = 0; drawing = false; breathState = "idle"; pid = null;
   stopMic(); removeEventListener("devicemotion", onMotion); mode = "finger"; knock = false;
   musicStop();
   state = "unlit";
+  tiltRef = null; landK = 0; tiltK = 1; buildFrame(); buildEmberDots();
   document.getElementById("start").classList.remove("gone");
 };
 document.getElementById("flip").onclick = () => { orient = (orient + 1) % 2; buildFrame(); };
