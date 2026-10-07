@@ -537,8 +537,25 @@ function initAudio() {
 }
 // iOS hält den Audio-Kontext gern angehalten oder unterbricht ihn (Sperrbildschirm, Mikro-Freigabe, Anruf).
 // Darum bei jeder Berührung prüfen, fortsetzen und mit einem stillen Ton freischalten.
+// iPhone: Im Lautlos-Modus (und auf älteren iOS ohne audioSession) bleibt Web-Audio stumm, Videos und Musik-Apps aber nicht.
+// Ein stummes, endlos laufendes <audio>-Element schaltet das iPhone auf "Wiedergabe" – dann ist auch das Spiel zu hören.
+const isIOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+const keepAlive = (() => {
+  if (!isIOS) return null;
+  const sr = 8000, n = sr, buf = new ArrayBuffer(44 + n * 2), v = new DataView(buf);
+  const str = (o, t) => { for (let i = 0; i < t.length; i++) v.setUint8(o + i, t.charCodeAt(i)); };
+  str(0, "RIFF"); v.setUint32(4, 36 + n * 2, true); str(8, "WAVE"); str(12, "fmt "); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, sr, true); v.setUint32(28, sr * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true); str(36, "data"); v.setUint32(40, n * 2, true);
+  const a = document.createElement("audio");
+  a.src = URL.createObjectURL(new Blob([buf], { type: "audio/wav" })); a.loop = true; a.preload = "auto";
+  a.setAttribute("playsinline", ""); a.setAttribute("x-webkit-airplay", "deny"); a.disableRemotePlayback = true;
+  return a;
+})();
+function keepAudioAlive() { if (keepAlive && keepAlive.paused && !document.hidden) keepAlive.play().catch(() => {}); }
+document.addEventListener("visibilitychange", () => { if (keepAlive && document.hidden) keepAlive.pause(); });
 function ensureAudio() {
   if (ac && ac.state === "closed") ac = null;
+  keepAudioAlive();
   initAudio();
   if (!ac) return;
   if (ac.state !== "running") ac.resume().catch(() => {});
@@ -546,7 +563,7 @@ function ensureAudio() {
 }
 function setAudioSession(type) { try { if (navigator.audioSession) navigator.audioSession.type = type; } catch (e) {} }
 setAudioSession("playback");   // spielt auch bei Stummschalter
-document.addEventListener("pointerdown", () => { if (ac && ac.state !== "running") ensureAudio(); }, true);
+document.addEventListener("pointerdown", () => { if ((ac && ac.state !== "running") || (keepAlive && keepAlive.paused)) ensureAudio(); }, true);
 document.addEventListener("touchend", () => { if (ac && ac.state !== "running") ensureAudio(); }, true);
 document.addEventListener("visibilitychange", () => { if (!document.hidden && ac && ac.state !== "running") ac.resume().catch(() => {}); });
 
@@ -1125,6 +1142,14 @@ function render(t) {
 }
 
 // ---------- Simulation ----------
+// Ton hängt (Audio-Kontext angehalten, z. B. nach Anruf, Sperrbildschirm oder Mikro-Abfrage)? Dann um ein Antippen bitten.
+let audioStuckT = 0;
+const audioStuck = () => audioStuckT > 1.5;
+function audioWatch(dt) {
+  audioStuckT = ac && ac.state !== "running" && !document.hidden ? audioStuckT + dt : 0;
+  if (audioStuckT > 1.5 && ac && Math.random() < dt) ac.resume().catch(() => {});
+  if (mode !== "breath" && state === "lit") setCue(audioStuck() ? "Kein Ton? Einmal kurz auf den Bildschirm tippen" : $("cue").textContent.startsWith("Kein Ton") ? "" : $("cue").textContent);
+}
 // Wischen vom Glutende Richtung Mundstück brennt den Joint immer ab (auch im Atem-Modus, nur nicht verraten)
 const fingerBurning = () => pid !== null && performance.now() - lastBurnT < 200;
 const drawingNow = () => (mode === "breath" && drawing) || fingerBurning();
@@ -1142,6 +1167,7 @@ function autoPuff() {
 }
 function update(dt, t) {
   const R = radius(bx);
+  if (state !== "unlit") audioWatch(dt);
   if (state === "lighting") {
     lightT += dt;
     if (mode === "breath") breathStep(dt);   // Grundrauschen und Lautsprecher-Kopplung schon beim Anzünden einmessen
@@ -2184,6 +2210,7 @@ document.getElementById("light").onclick = async () => {
   if (prefMode === "breath") {
     status("Mikrofon wird angefragt …");
     if (!await startMic()) { useMode = "finger"; note = "Ohne Mikrofon: Finger auf die Glut legen und Richtung Mundstück wischen."; }
+    keepAudioAlive();   // die Mikro-Freigabe kann das stumme Hintergrund-Audio anhalten
   }
   const motionOk = await motionP;
   if (motionOk) {
@@ -2484,7 +2511,7 @@ function breathStep(dt) {
   micInt += ((breathState === "draw" ? drawRaw : 0) - micInt) * Math.min(1, dt * 10);
   micBlow += ((breathState === "blow" && lungs > 0 ? blowRaw : 0) - micBlow) * Math.min(1, dt * 10);
   if (lungs > 0 && now - lungsAt > 25000) lungs = 0;   // zu lange angehalten: Rauch ist weg
-  setCue(micNeedTap ? "Einmal kurz auf den Bildschirm tippen – dann hört das Mikro zu" : lungs > .05 && breathState !== "blow" && breathState !== "draw" ? "Reinpusten zum Ausatmen" : "");
+  setCue(micNeedTap ? "Einmal kurz auf den Bildschirm tippen – dann hört das Mikro zu" : audioStuck() ? "Kein Ton? Einmal kurz auf den Bildschirm tippen" : lungs > .05 && breathState !== "blow" && breathState !== "draw" ? "Reinpusten zum Ausatmen" : "");
   if (micHud) $("micHud").textContent =
     `${{ idle: "Ruhe", draw: "Ziehen", blow: "Pusten" }[breathState]} · Schwerpunkt ${(centroid / 1000).toFixed(1)} kHz · tief ${micLo | 0} dB / hoch ${micHi | 0} dB · Puste-Wert ${blowScore.toFixed(2)} · Lunge ${lungs.toFixed(1)} · Audio ${ac.state} ${ac.sampleRate} · Spitze ${micPeak | 0} dB · Züge ${drawCount} · Video ${trip.on ? (trip.still ? "Standbild" : "läuft") : trip.played ? "war dran" : "wartet"} · Zippo-Test ${micTest ? (micTest.t0 ? "läuft" : micTest.ok ? "gehört" : "nichts gehört") : "–"} · Kopplung ${cplDb ? Array.from(cplDb, v => v | 0).join("/") : "–"}`;
 }
