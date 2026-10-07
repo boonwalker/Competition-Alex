@@ -238,18 +238,39 @@ function buildFrame() {
   // Ausdrücken: die Spitze wird auf den Aschenbecherboden gesenkt und bleibt dort (Widerstandspunkt). Der Boden ist die
   // Waagerechte in Querhaltung – im Hochformat-Bild eine Linie nahe der Kante, zu der die Schwerkraft zeigt.
   // Wird der Stummel gestaucht, stellt sich der Joint dadurch steiler.
+  const thBase = th;
   if (stubPose && (state === "stub" || state === "out") && stubPose.k > 0) {
-    const fx = orient ? W - stubPose.floor : stubPose.floor, dTip = tiltK * (bx + L / 2 + radius(bx) * .15);
-    const thF = -Math.acos(clamp((fx - ax) / dTip, -.985, .985));
-    th += (thF - th) * stubPose.k;
+    // Boden = Linie quer zur gemessenen Schwerkraft, nahe dem in Fallrichtung tiefsten Bildschirmrand ("hält die Waage")
+    const [gx, gy] = gravScreen(), D = Math.max(0, W * gx, H * gy, W * gx + H * gy) - stubPose.floor;
+    const dTip = tiltK * (bx + L / 2 + radius(bx) * .15), c = clamp((D - (ax * gx + ay * gy)) / dTip, -.985, .985);
+    const phi = Math.atan2(gy, gx), a = Math.acos(c), wrap = d => Math.atan2(Math.sin(d), Math.cos(d));
+    // die Spitze muss im Bild bleiben: sonst nur so weit Richtung Boden drehen, wie sie noch zu sehen ist
+    const mg = r1 * 1.3, inside = t => { const x = ax + Math.cos(t) * dTip, y = ay + Math.sin(t) * dTip; return x > mg && x < W - mg && y > mg && y < H - mg; };
+    const cand = [phi + a, phi - a].sort((p, q) => Math.abs(wrap(p - thBase)) - Math.abs(wrap(q - thBase)));
+    let thF = cand.find(inside);
+    if (thF === undefined) {
+      const d = wrap(cand[0] - thBase); thF = thBase;
+      for (let i = 1; i <= 40; i++) { const t = thBase + d * i / 40; if (!inside(t)) break; thF = t; }
+    }
+    th = thBase + wrap(thF - thBase) * stubPose.k;
   }
   // x = -L/2 liegt genau am Ankerpunkt; die Verkürzung (Perspektive) wirkt vom Mund aus nach vorn
   frameM = new DOMMatrix().translate(ax, ay).rotate(th * 180 / Math.PI).scale(tiltK, 1).translate(L / 2, 0);
-  if (-Math.cos(th) > 0) frameM = frameM.scale(1, -1);   // Oberseite des Joints zeigt nach oben
+  if (-Math.cos(thBase) > 0) frameM = frameM.scale(1, -1);   // Oberseite des Joints zeigt nach oben
   frameInv = frameM.inverse();
   const a = frameInv.transformPoint(new DOMPoint(W / 2, H / 2)), b = frameInv.transformPoint(new DOMPoint(W / 2, H / 2 - 1));
   UX = b.x - a.x; UY = b.y - a.y;
-  const g = frameInv.transformPoint(new DOMPoint(W / 2 + (orient ? 1 : -1), H / 2));
+  updateG();
+}
+// Schwerkraft auf dem Bildschirm (Einheitsvektor nach unten): gemessen, sonst angenommen (Querhaltung, Boden gegenüber dem Filter)
+function gravScreen() {
+  if (gScreen && Math.hypot(gScreen[0], gScreen[1]) > 3) { const l = Math.hypot(gScreen[0], gScreen[1]); return [gScreen[0] / l, gScreen[1] / l]; }
+  return [orient ? 1 : -1, 0];
+}
+// dieselbe Richtung im Koordinatensystem des Joints (für fallende Asche, Funken, Aschenbecherboden)
+function updateG() {
+  if (!frameInv) return;
+  const [gx, gy] = gravScreen(), a = frameInv.transformPoint(new DOMPoint(W / 2, H / 2)), g = frameInv.transformPoint(new DOMPoint(W / 2 + gx, H / 2 + gy));
   GX = g.x - a.x; GY = g.y - a.y;
 }
 
@@ -1392,6 +1413,7 @@ function autoPuff() {
   lungs *= unexhaled >= 2 ? .55 : .8;
 }
 function update(dt, t) {
+  updateG();   // fallende Asche, Funken und Aschenbecherboden richten sich nach der gemessenen Lage
   const R = radius(bx);
   if (state !== "unlit") audioWatch(dt);
   if (state === "lighting") {
@@ -1441,7 +1463,7 @@ function update(dt, t) {
   }
   if (state === "stub") {
     stubT += dt;
-    if (stubPose) { stubPose.k = easeIO(clamp(stubT / STUB_LOWER, 0, 1)); buildFrame(); }
+    if (stubPose) { stubPose.k = easeIO(clamp(stubT / STUB_LOWER, 0, 1)); buildFrame(); }   // folgt dabei der gemessenen Lage
     const R = radius(bx);
     for (let j = 0; j < pushT.length; j++) if (!pushFired[j] && stubT >= pushT[j]) { pushFired[j] = true; pushFx(j); }
     stubC = stubCompress(stubT);
