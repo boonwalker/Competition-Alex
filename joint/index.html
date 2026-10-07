@@ -203,27 +203,33 @@ function resize() {
 }
 
 // Neigung durch den Bewegungssensor: das lange Ende schwenkt ein wenig mit, als läge der Joint im echten Raum
-let tiltA = 0, tiltK = 1, tiltRef = null, gZ = null;
+let tiltK = 1, tiltRef = null, gZ = null;
 function frameAnchor() {
   // Hochformat: Filter sitzt etwas links der rechten Ecke an der Unterkante, zeigt also aufs Hauptmikrofon unten rechts (iPhone 17 Pro)
   const port = H >= W;
   return [orient ? (port ? W * .26 : 0) : (port ? W * .74 : W), H];
 }
+// Querhalten: Handy im Querformat mit der Hörmuschel links (bei gespiegeltem Joint: rechts) -> der Joint wandert an die
+// dann obere lange Displaykante und schmiegt sich an sie; zurück Richtung Hochkant wandert die Spitze wieder in die Ecke
+let landK = 0;
 function updateTilt(dt) {
   if (state !== "lit" || !gScreen || Math.hypot(gScreen[0], gScreen[1]) < 1.5) return;
-  const roll = Math.atan2(gScreen[1], gScreen[0]), pitch = Math.atan2(gZ || 0, Math.hypot(gScreen[0], gScreen[1]));
-  if (!tiltRef) { tiltRef = [roll, pitch]; return; }
-  let d = roll - tiltRef[0]; d = Math.atan2(Math.sin(d), Math.cos(d));
-  // zur Bildschirmmitte darf die Spitze weiter schwenken als nach außen (sonst verschwindet sie hinter dem Rand)
-  // Richtung umgekehrt zur früheren Einstellung und etwas empfindlicher
-  const ta = orient ? clamp(-d * .55, -.14, .045) : clamp(-d * .55, -.045, .14), tk = 1 - clamp(Math.abs(pitch - tiltRef[1]) * .16, 0, .1);
-  const na = tiltA + (ta - tiltA) * Math.min(1, dt * 6), nk = tiltK + (tk - tiltK) * Math.min(1, dt * 6);
-  if (Math.abs(na - tiltA) + Math.abs(nk - tiltK) > 1e-4) { tiltA = na; tiltK = nk; buildFrame(); }
+  const pitch = Math.atan2(gZ || 0, Math.hypot(gScreen[0], gScreen[1]));
+  if (!tiltRef) { tiltRef = [0, pitch]; return; }
+  const a = Math.atan2(-gScreen[0], gScreen[1]) * (orient ? -1 : 1);   // 0 = hochkant, +90° = quer mit Hörmuschel links
+  const q = clamp((a - .08) / (Math.PI / 2 * .85), 0, 1), lk = q * q * (3 - 2 * q);
+  const tk = 1 - clamp(Math.abs(pitch - tiltRef[1]) * .16, 0, .1);
+  const nl = landK + (lk - landK) * Math.min(1, dt * 5), nk = tiltK + (tk - tiltK) * Math.min(1, dt * 6);
+  if (Math.abs(nl - landK) + Math.abs(nk - tiltK) > 1e-4) { landK = nl; tiltK = nk; buildFrame(); }
 }
 function buildFrame() {
   // Joint-Achse vom Filter an der Unterkante zur gegenüberliegenden oberen Ecke
-  const [ax, ay] = frameAnchor(), m = r1 * .9;   // Spitze zielt knapp in die obere Ecke, damit die Glut ganz zu sehen ist
-  const th = Math.atan2(m - ay, (orient ? W - m : m) - ax) + tiltA;
+  const [ax0, ay] = frameAnchor(), m = r1 * .9;   // Spitze zielt knapp in die obere Ecke, damit die Glut ganz zu sehen ist
+  let ax = ax0, th = Math.atan2(m - ay, (orient ? W - m : m) - ax0);
+  if (H >= W && landK > 0) {   // quer gehalten: an die lange Kante (im Hochformat-Bild die rechte bzw. linke Seite)
+    ax = ax0 + ((orient ? r1 * 1.8 : W - r1 * 1.8) - ax0) * landK;
+    th += (-Math.PI / 2 + (orient ? .035 : -.035) - th) * landK;
+  }
   // x = -L/2 liegt genau am Ankerpunkt; die Verkürzung (Perspektive) wirkt vom Mund aus nach vorn
   frameM = new DOMMatrix().translate(ax, ay).rotate(th * 180 / Math.PI).scale(tiltK, 1).translate(L / 2, 0);
   if (-Math.cos(th) > 0) frameM = frameM.scale(1, -1);   // Oberseite des Joints zeigt nach oben
@@ -1871,11 +1877,13 @@ function tripCheck(dt) {
   const burnt = (burnStart - bx) / (burnStart - burnEnd);
   for (const c of TRIPS) if (c.arm === undefined && burnt >= c.frac)
     c.arm = drawCount + (drawingNow() && (mode === "breath" ? !zugCounted : !fingerCounted) ? 1 : 0);
-  const c = TRIPS.find(c => !c.played && c.arm !== undefined && drawCount > c.arm);
+  // zwischen zwei Videos liegt immer mindestens ein Zug ohne Video
+  const lastAt = Math.max(-9, ...TRIPS.filter(c => c.played).map(c => c.playedAt ?? -9));
+  const c = TRIPS.find(c => !c.played && c.arm !== undefined && drawCount > c.arm && drawCount > lastAt + 1);
   if (c && trip.run > .3) startTrip(c);
 }
 function startTrip(c) {
-  c.played = true; trip.clip = c; trip.on = true; trip.still = false;
+  c.played = true; c.playedAt = drawCount; trip.clip = c; trip.on = true; trip.still = false;
   // Kameraflug wie in die Glutwelt: auf die Glut zoomen, hineindrehen, dann das Video
   const q = frameM.transformPoint(new DOMPoint(bx + radius(bx) * .15, 0));
   dive.ox = q.x; dive.oy = q.y; dive.fast = false; dive.rot = (Math.random() < .5 ? -1 : 1) * rand(.45, .8);
@@ -2701,7 +2709,7 @@ document.getElementById("light").onclick = async () => {
     lastAcc = null; gAvg = null; gHold = null; holdAcc = []; motionHist = []; lastOverhead = -1e9; knockThr = 6 - 55 * .052;   // 0.8 … 6 m/s² Sprung zwischen zwei Messungen
     removeEventListener("devicemotion", onMotion); addEventListener("devicemotion", onMotion);
   }
-  micSens = 40; tiltRef = null; tiltA = 0; tiltK = 1; buildFrame();
+  micSens = 40; tiltRef = null; landK = 0; tiltK = 1; buildFrame();
   mode = useMode; knock = prefKnock && motionOk; status(""); mStep = 0;
   if (note) { setCue(note); setTimeout(() => setCue(""), 5000); }
   document.getElementById("start").classList.add("gone");
