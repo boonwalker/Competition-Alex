@@ -207,8 +207,9 @@ function updateTilt(dt) {
   if (!tiltRef) { tiltRef = [roll, pitch]; return; }
   let d = roll - tiltRef[0]; d = Math.atan2(Math.sin(d), Math.cos(d));
   // zur Bildschirmmitte darf die Spitze weiter schwenken als nach außen (sonst verschwindet sie hinter dem Rand)
-  const ta = orient ? clamp(d * .35, -.11, .035) : clamp(d * .35, -.035, .11), tk = 1 - clamp(Math.abs(pitch - tiltRef[1]) * .12, 0, .08);
-  const na = tiltA + (ta - tiltA) * Math.min(1, dt * 4), nk = tiltK + (tk - tiltK) * Math.min(1, dt * 4);
+  // Richtung umgekehrt zur früheren Einstellung und etwas empfindlicher
+  const ta = orient ? clamp(-d * .55, -.14, .045) : clamp(-d * .55, -.045, .14), tk = 1 - clamp(Math.abs(pitch - tiltRef[1]) * .16, 0, .1);
+  const na = tiltA + (ta - tiltA) * Math.min(1, dt * 6), nk = tiltK + (tk - tiltK) * Math.min(1, dt * 6);
   if (Math.abs(na - tiltA) + Math.abs(nk - tiltK) > 1e-4) { tiltA = na; tiltK = nk; buildFrame(); }
 }
 function buildFrame() {
@@ -490,7 +491,7 @@ function bodyClip(c, R) {
 
 // ---------- Partikel ----------
 function emitSmoke(x, y, o) {
-  if (smoke.length > 1500) return;
+  if (smoke.length > 1900) return;
   const v = rand(26, 40), sd = rand(-3, 3);
   smoke.push(Object.assign({ x, y, vx: UX * v - UY * sd, vy: UY * v + UX * sd, s: r1 * rand(.14, .22), gs: r1 * rand(.45, .9), a: rand(.08, .16), life: 0, max: rand(3.5, 6.5), rot: rand(0, 6), vr: rand(-.4, .4), ph: rand(0, 6), sx: 1, v: Math.random() < .25 ? 4 + (Math.random() * 4 | 0) : (Math.random() * 4 | 0) }, o || {}));
 }
@@ -619,12 +620,13 @@ const HOOK = [   // gepfiffene Melodie: [Frequenz, Länge in Achteln]
   [[N.Fs5, 2], 0, [N.Ds5, 1], [N.Cs5, 1], [N.B4, 2], 0, [N.Gs4, 2], 0],
   [[N.B4, 6], 0, 0, 0, 0, 0, 0, 0],
 ];
-let musicOn = true, mAc = null, mOut = null, mFilter = null, mNext = 0, mStep = 0, mTimer = null, mGate = false;
+let musicOn = true, mAc = null, mOut = null, mFilter = null, mHP = null, mNext = 0, mStep = 0, mTimer = null, mGate = false;
 function store0(k) { try { return localStorage.getItem("joint." + k); } catch (e) { return null; } }
 const musicQuiet = () => mode === "breath" && !!micStream;   // im Atem-Modus nur dumpf und leise, damit das Mikro sie nicht als Ziehen hört
 function musicBuild() {
   mAc = ac;
   mFilter = ac.createBiquadFilter(); mFilter.type = "lowpass"; mFilter.frequency.value = 12000;
+  mHP = ac.createBiquadFilter(); mHP.type = "highpass"; mHP.frequency.value = 20; mHP.connect(mFilter);
   // laut fürs Handy-Lautsprecher: verdichten, anheben, weich begrenzen
   const comp = ac.createDynamicsCompressor(); comp.threshold.value = -22; comp.knee.value = 8; comp.ratio.value = 6; comp.attack.value = .003; comp.release.value = .15;
   const boost = ac.createGain(); boost.gain.value = 1.0;
@@ -632,7 +634,7 @@ function musicBuild() {
   for (let i = 0; i < 1024; i++) { const x = i / 511.5 - 1; cv2[i] = Math.tanh(1.6 * x) / Math.tanh(1.6); }
   clip.curve = cv2;
   mFilter.connect(comp).connect(boost).connect(clip).connect(master);
-  mOut = ac.createGain(); mOut.gain.value = 0; mOut.connect(mFilter);
+  mOut = ac.createGain(); mOut.gain.value = 0; mOut.connect(mHP);
   mGate = false;
 }
 function musicGate(open) {
@@ -644,6 +646,7 @@ function musicGate(open) {
   const now = ac.currentTime;
   if (open) {
     mFilter.frequency.value = musicQuiet() ? 800 : 12000;
+    mHP.frequency.value = musicQuiet() ? 280 : 20;
     mOut.gain.cancelScheduledValues(now); mOut.gain.setValueAtTime(0, now); mOut.gain.linearRampToValueAtTime(musicQuiet() ? .6 : 1, now + .03);
     mNext = now + .02;
     if (!mTimer) mTimer = setInterval(musicTick, 25);
@@ -651,7 +654,7 @@ function musicGate(open) {
     // schon vorgeplante, noch nicht gespielte Achtel zurückspulen und alles Geplante sofort abschneiden
     mStep = Math.max(0, mStep - Math.max(0, Math.ceil((mNext - now) / STEP)));
     mOut.disconnect();
-    mOut = ac.createGain(); mOut.gain.value = 0; mOut.connect(mFilter);
+    mOut = ac.createGain(); mOut.gain.value = 0; mOut.connect(mHP);
   }
   mGate = open;
 }
@@ -777,7 +780,10 @@ function customStart() {
     cFilter4 = ac.createBiquadFilter(); cFilter4.type = "lowpass"; cFilter4.Q.value = .7;
     cOut = ac.createGain();
     cPan = ac.createStereoPanner ? ac.createStereoPanner() : null;
-    cIn.connect(comp).connect(makeup).connect(clip).connect(cFilter).connect(cFilter2).connect(cFilter3).connect(cFilter4).connect(cOut);
+    // im Atem-Modus kein Bass unter ~280 Hz: die Hörmuschel gibt ihn ohnehin nicht wieder, und dort hört das Mikro aufs Pusten
+    cHP = ac.createBiquadFilter(); cHP.type = "highpass"; cHP.Q.value = .7; cHP2 = ac.createBiquadFilter(); cHP2.type = "highpass"; cHP2.Q.value = .7;
+    cHP.frequency.value = cHP2.frequency.value = 20;
+    cIn.connect(comp).connect(makeup).connect(clip).connect(cFilter).connect(cFilter2).connect(cFilter3).connect(cFilter4).connect(cHP).connect(cHP2).connect(cOut);
     if (cPan) cOut.connect(cPan).connect(master); else cOut.connect(master);
     cTone = "";
     musicTone(true);
@@ -788,7 +794,7 @@ function customStart() {
   playSnippet(now, true);
 }
 // Klangfarbe der Musik: normal laut und hell; mit Mikro leiser und dumpf; in der Glutwelt gedämpft im Hintergrund
-let cPan = null, cIn = null, cFilter2 = null, cFilter3 = null, cFilter4 = null, cOut = null, cTone = "";
+let cHP = null, cHP2 = null, cPan = null, cIn = null, cFilter2 = null, cFilter3 = null, cFilter4 = null, cOut = null, cTone = "";
 let cToneGain = 1, fbAtten = 0;
 // Hat dieses Handy einmal eine Musik-Rückkopplung gezeigt, wird die Musik beim Ziehen etwas leiser (je 4 dB, höchstens 12 dB);
 // das erholt sich langsam wieder. Handys ohne Rückkopplung behalten die volle Lautstärke.
@@ -806,11 +812,14 @@ function musicTone(now) {
   cTone = tone;
   const [f, g] = { full: [20000, 1], quiet: [1800, 1], world: [1100, .7], video: [1800, .7] }[tone], t = ac.currentTime, tc = now === true ? .001 : .25;
   // beim Ziehen (Mikro an): nur über den Lautsprecher fern vom Mikro, dafür etwas lauter
-  const away = tone === "quiet" && quietPan !== 0 && cPan;
-  cToneGain = tone === "quiet" ? g * Math.pow(10, -fbAtten / 20) * (away ? 1.3 : 1) : g;
-  if (cPan) { cPan.pan.cancelScheduledValues(t); cPan.pan.setTargetAtTime(away ? quietPan : 0, t, tc); }
+  // in der Glutwelt (Atem-Modus) ebenfalls nur über die Hörmuschel
+  const ep = earPan(), away = (tone === "quiet" ? quietPan !== 0 : tone === "world" && mode === "breath" && !!micStream && ep !== 0) && cPan;
+  cToneGain = tone === "quiet" ? g * Math.pow(10, -fbAtten / 20) * (away ? 1.3 : 1) : g * (away ? 1.3 : 1);
+  if (cPan) { cPan.pan.cancelScheduledValues(t); cPan.pan.setTargetAtTime(away ? (tone === "world" ? ep : quietPan) : 0, t, tc); }
   // mit Mikro steil (48 dB/Oktave) über ~2 kHz abschneiden: klingt voll, aber oberhalb von 3 kHz, wo das Mikro auf Atem hört, ist Ruhe
   for (const n of [cFilter, cFilter2, cFilter3, cFilter4]) { n.frequency.cancelScheduledValues(t); n.frequency.setTargetAtTime(f, t, tc); }
+  const hpf = musicQuiet() && (tone === "quiet" || tone === "world") ? 280 : 20;
+  for (const n of [cHP, cHP2]) if (n) { n.frequency.cancelScheduledValues(t); n.frequency.setTargetAtTime(hpf, t, tc); }
   cOut.gain.cancelScheduledValues(t); cOut.gain.setTargetAtTime(cToneGain, t, tc);
 }
 // Setzt die Musik kurz nach dem Verstummen wieder ein (neuer Zug, kurzer Aussetzer), läuft sie an derselben Stelle weiter
@@ -855,6 +864,64 @@ const Z = { open: .25, strike: 1.79, ign: 2.15, catchT: 2.2, off: 3.6, lit: 3.9 
 // Flamme steigt im Lot zu den langen Seiten des Joints nach oben (senkrecht zur Joint-Achse, zur Oberseite hin)
 const zUp = () => [0, -1];
 const zTip = () => [burnStart - radius(burnStart) * .12, 0];   // an der oberen Kante der Öffnung
+// Schnittfläche am offenen Ende: Tabakfasern, dazwischen unregelmäßige, harzige Marihuana-Klumpen
+// (gezeichnet als Kreis vom Radius R, perspektivisch auf die schmale Ellipse gestaucht)
+const TOBC = ["#8a6a34", "#a07c40", "#6e5226", "#b48e4e", "#5a4220", "#94723a", "#c09a58", "#4a3518"];
+function drawCutFace(cx, cy, rx, R) {
+  ctx.save(); ctx.translate(cx, cy); ctx.scale(rx / R, 1);
+  const fiber = (i, a0) => {
+    const a = hsh(i * 3.1 + 7) * 6.283, rr = Math.sqrt(hsh(i * 7.7 + 1)) * R * .97, x = Math.cos(a) * rr, y = Math.sin(a) * rr;
+    const ang = hsh(i * 1.9 + .5) * 6.283, len = R * (.1 + hsh(i * 1.3) * .3), bend = (hsh(i * 2.3) - .5) * len * .6;
+    const c = Math.cos(ang), s = Math.sin(ang);
+    ctx.strokeStyle = TOBC[i % TOBC.length]; ctx.globalAlpha = a0 * (.45 + hsh(i + 2) * .55); ctx.lineWidth = R * (.03 + hsh(i + 4) * .05);
+    ctx.beginPath(); ctx.moveTo(x - c * len / 2, y - s * len / 2); ctx.quadraticCurveTo(x - s * bend, y + c * bend, x + c * len / 2, y + s * len / 2); ctx.stroke();
+  };
+  ctx.lineCap = "round";
+  for (let i = 0; i < 170; i++) fiber(i, 1);   // gedrehter, faseriger Tabak
+  // Klumpen: wenige große, viele kleine; jeder mit eigener, zerklüfteter Form
+  for (let k = 0; k < 13; k++) {
+    const sz = R * (.06 + Math.pow(hsh(k * 5.3 + 2), 2) * .32), a = hsh(k * 2.9 + 11) * 6.283, rr = Math.sqrt(hsh(k * 4.1 + 3)) * (R - sz * .6);
+    const bx2 = Math.cos(a) * rr, by2 = Math.sin(a) * rr, n = 9 + (hsh(k) * 5 | 0), pts = [];
+    for (let j = 0; j < n; j++) { const t = j / n * 6.283, q = sz * (.6 + hsh(k * 13 + j) * .55) * (1 + .25 * Math.sin(t * 2 + k)); pts.push([bx2 + Math.cos(t) * q, by2 + Math.sin(t) * q * (.75 + hsh(k + 9) * .4)]); }
+    ctx.beginPath(); ctx.moveTo((pts[0][0] + pts[n - 1][0]) / 2, (pts[0][1] + pts[n - 1][1]) / 2);
+    for (let j = 0; j < n; j++) { const p = pts[j], q = pts[(j + 1) % n]; ctx.quadraticCurveTo(p[0], p[1], (p[0] + q[0]) / 2, (p[1] + q[1]) / 2); }
+    ctx.closePath();
+    const hue = hsh(k * 7 + 1), g = ctx.createRadialGradient(bx2 - sz * .3, by2 - sz * .35, sz * .05, bx2, by2, sz * 1.15);
+    g.addColorStop(0, hue < .5 ? "#97ad5c" : "#88a052"); g.addColorStop(.45, hue < .3 ? "#5a722f" : hue < .7 ? "#50692b" : "#566a3a"); g.addColorStop(1, "#1f300f");
+    ctx.globalAlpha = 1; ctx.fillStyle = g; ctx.fill();
+    ctx.strokeStyle = "rgba(18,26,8,.7)"; ctx.lineWidth = R * .025; ctx.stroke();
+    ctx.save(); ctx.clip();
+    // Blättchen-Struktur: dunkle Kerben und hellere Kelchblätter
+    for (let j = 0; j < 7; j++) {
+      const t = hsh(k * 3 + j * 1.7) * 6.283, q = sz * hsh(k + j * 2.2) * .8;
+      ctx.fillStyle = j % 2 ? "rgba(30,48,14,.55)" : "rgba(170,200,100,.35)";
+      ctx.beginPath(); ctx.ellipse(bx2 + Math.cos(t) * q, by2 + Math.sin(t) * q, sz * (.15 + hsh(j + k) * .2), sz * (.07 + hsh(j * 3 + k) * .08), t, 0, 7); ctx.fill();
+    }
+    // Harz: dichter Belag aus winzigen, milchig-glänzenden Kristallen
+    for (let j = 0; j < 22; j++) {
+      const t = hsh(k * 11 + j * .7) * 6.283, q = sz * Math.sqrt(hsh(k * 2 + j * 1.3)) * 1.05;
+      ctx.fillStyle = `rgba(${236 + (hsh(j) * 18 | 0)},${232 - (hsh(j + k) * 30 | 0)},${190 - (hsh(j * 2) * 60 | 0)},${.35 + hsh(j + 4 * k) * .45})`;
+      ctx.beginPath(); ctx.arc(bx2 + Math.cos(t) * q, by2 + Math.sin(t) * q, R * (.008 + hsh(j * 5 + k) * .014), 0, 7); ctx.fill();
+    }
+    // feuchter Glanz
+    const hl = ctx.createRadialGradient(bx2 - sz * .35, by2 - sz * .4, 0, bx2 - sz * .35, by2 - sz * .4, sz * .55);
+    hl.addColorStop(0, "rgba(255,255,225,.35)"); hl.addColorStop(1, "rgba(255,255,225,0)"); ctx.fillStyle = hl; ctx.fillRect(bx2 - sz * 1.2, by2 - sz * 1.2, sz * 2.4, sz * 2.4);
+    ctx.restore();
+    // orange Härchen (Stempel), die aus dem Klumpen ragen
+    ctx.globalAlpha = .85; ctx.lineWidth = R * .012;
+    for (let j = 0; j < 2 + (sz / R * 12 | 0); j++) {
+      const t = hsh(k * 17 + j * 2.1) * 6.283, q = sz * (.3 + hsh(k + j * 3) * .6), x1 = bx2 + Math.cos(t) * q, y1 = by2 + Math.sin(t) * q, l = sz * (.3 + hsh(j + k * 9) * .4);
+      ctx.strokeStyle = hsh(j * 7 + k) < .5 ? "#c96f2a" : "#a8541e";
+      ctx.beginPath(); ctx.moveTo(x1, y1); ctx.quadraticCurveTo(x1 + Math.cos(t + 1) * l * .6, y1 + Math.sin(t + 1) * l * .6, x1 + Math.cos(t + .3) * l, y1 + Math.sin(t + .3) * l); ctx.stroke();
+    }
+  }
+  for (let i = 170; i < 215; i++) fiber(i, .85);   // einzelne Fasern liegen über den Klumpen
+  ctx.globalAlpha = 1;
+  // Schatten am Papierrand: die Füllung sitzt etwas tiefer als die Kante
+  const sh = ctx.createRadialGradient(0, 0, R * .55, 0, 0, R); sh.addColorStop(0, "rgba(10,6,2,0)"); sh.addColorStop(1, "rgba(10,6,2,.55)");
+  ctx.fillStyle = sh; ctx.fillRect(-R, -R, R * 2, R * 2);
+  ctx.restore();
+}
 // Flamme hüllt die ganze Schnittfläche ein; ihr bauchigster Teil sitzt an der gegenüberliegenden Kante der Öffnung
 function zippoBase(h) { const [ux, uy] = zUp(), [tx, ty] = zTip(), R = radius(burnStart) * .7; return [tx - ux * R, ty - uy * R]; }   // Flammenfuß umschließt die linke obere Kante
 // Detailreiche Flamme: blauer Fuß, heller Kern, gelber Leuchtkörper, flackernde Spitze, abreißende Zungen
@@ -939,11 +1006,7 @@ function drawJointPart(t, R, lit) {
     eg.addColorStop(0, "#5e4c2e"); eg.addColorStop(.6, "#43361f"); eg.addColorStop(1, "#1f180d");
     ctx.fillStyle = eg; ctx.fill();
     ctx.clip();
-    for (let i = 0; i < 110; i++) {   // Krümel und Fasern in der Öffnung, gut ein Drittel davon grüne Kräuterbrösel
-      ctx.fillStyle = ["#1e170b", "#56772a", "#7a6640", "#3e5a1e", "#9a8452", "#6b8c33", "#5a4a28", "#47652a"][i % 8];
-      ctx.globalAlpha = .55 + hsh(i + 1) * .45;
-      ctx.fillRect(ex + (hsh(i) - .5) * rx * 1.7, (hsh(i + 9) - .5) * R * 1.9, .8 + hsh(i + 3) * 1.4, .7 + hsh(i + 5) * 1.1);
-    }
+    drawCutFace(ex, (topY(ex) + botY(ex)) / 2, rx, (botY(ex) - topY(ex)) / 2);
     ctx.globalAlpha = 1;
     if (k > 0) { ctx.fillStyle = `rgba(25,12,6,${k})`; ctx.fillRect(ex - rx, -R, rx * 2, R * 2); }
     ctx.restore();
@@ -1322,19 +1385,20 @@ function update(dt, t) {
   // Ausatmen
   if (exhaleT >= 0) {
     exhaleT += dt;
-    const lvl = (exhaleSrc === "mic" ? micBlow : exhaleLevel()) * exhaleStrength;
+    // beim Pusten ins Mikro: schon leises Pusten gibt eine ordentliche Wolke
+    const lvl = (exhaleSrc === "mic" ? (micBlow > .02 ? .3 + micBlow * 1.2 : 0) : exhaleLevel() * 1.2) * exhaleStrength;
     exhaleLvl += (lvl - exhaleLvl) * Math.min(1, dt * 12);
     // böig: Ausstoß schwankt, so entstehen einzelne Schwaden statt eines gleichmäßigen Strahls
     const gust = .45 + .55 * Math.max(0, Math.sin(exhaleT * 7.3) * .6 + Math.sin(exhaleT * 3.1 + 1) * .5 + .3);
-    const n = Math.round(exhaleLvl * gust * 190 * dt + Math.random() * .5);
+    const n = Math.round(exhaleLvl * gust * 290 * dt + Math.random() * .5);
     for (let i = 0; i < n; i++) {
       // gemischte Schwaden: ein Teil dichte Wolken, der Rest dünne Schleier; sie reichen bis über die gegenüberliegende Ecke
-      const dense = Math.random() < .35, streak = !dense && Math.random() < .14;
+      const dense = Math.random() < .42, streak = !dense && Math.random() < .14;
       const sp = L * rand(.6, 1.6) * (.55 + exhaleLvl * .5), ang = rand(-.24, .24) + (Math.random() < .4 ? rand(-.18, .18) : 0);
       emitSmoke(x0 + rand(0, r1 * .8), rand(-r1, r1), {
         vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp,
         s: r1 * rand(.6, 1.2) * (dense ? 1.3 : streak ? .5 : 1), gs: r1 * rand(2.5, 5) * (dense ? 1 : streak ? .7 : 1.4),
-        a: dense ? rand(.05, .09) : streak ? rand(.05, .08) : rand(.02, .04), max: rand(3.5, 6) * (streak ? 1.2 : 1), drag: rand(.8, 1.1),
+        a: dense ? rand(.065, .11) : streak ? rand(.06, .09) : rand(.028, .05), max: rand(3.5, 6) * (streak ? 1.2 : 1), drag: rand(.8, 1.1),
         rot: streak ? rand(-.3, .3) : rand(-1.5, 1.5), vr: 0, str: streak ? rand(2.5, 4) : rand(.2, .7),
         v: streak || Math.random() < .2 ? 4 + (Math.random() * 4 | 0) : (Math.random() * 4 | 0),
       });
@@ -2441,7 +2505,7 @@ function worldAudio(on) {
     const bus = ac.createGain(); bus.gain.setValueAtTime(0, t); bus.gain.linearRampToValueAtTime(1.4, t + .25);
     // Atem-Modus: alles über ~3 kHz steil wegfiltern und auf den Kanal legen, der beim Mikro leiser ankommt –
     // sonst würde das Tosen der Welt über das Mikro die Flammen selbst anfachen
-    const breathMic = mode === "breath" && !!micStream, pan = ac.createStereoPanner(); pan.pan.value = breathMic ? quietPan : 0;
+    const breathMic = mode === "breath" && !!micStream, pan = ac.createStereoPanner(); pan.pan.value = breathMic ? earPan() : 0;
     let out = bus.connect(comp).connect(clip);   // Filter erst nach dem Begrenzer: der erzeugt selbst Obertöne
     for (let i = 0; i < 3; i++) { const lp = ac.createBiquadFilter(); lp.type = "lowpass"; lp.frequency.value = breathMic ? 2800 : 20000; lp.Q.value = .7; out = out.connect(lp); }
     // im Atem-Modus etwas leiser: laut verzerrt der Handy-Lautsprecher, und diese Obertöne hört das Mikro als "Ziehen"
@@ -2619,7 +2683,7 @@ function connectMic() {
   hpAna = ac.createAnalyser(); hpAna.fftSize = 512; hpAna.smoothingTimeConstant = 0; hpBuf = new Float32Array(hpAna.fftSize);
   micSrc.connect(h1).connect(h2).connect(hpAna); hpFloor = 1e-5; hiFloor3 = 1e-7;   // hoch starten: das Grundrauschen wird schnell nach unten nachgeführt
   mGate = false; cGain = null; cSrc = null;
-  micFloor = 1e-7; loFloor = 1e-7; totFloor = 1e-7; breathState = "idle"; micOnTime = 0; refHist = [];
+  micFloor = 1e-7; loFloor = 1e-7; totFloor = 1e-7; windFloor = 1e-7; breathState = "idle"; micOnTime = 0; refHist = [];
   const tr = micStream.getAudioTracks()[0];
   if (tr) tr.onended = () => { micNeedTap = true; };
 }
@@ -2664,6 +2728,8 @@ document.addEventListener("pointerdown", () => { if (micNeedTap && micStream) fi
 // gelernt (beim Anzünden mit dem Feuerzeug-Zischen eingemessen, danach laufend nachgeführt).
 const MB = [40, 120, 250, 400, 700, 1100, 1500, 2200, 3200, 4500, 6500, 9000];
 let cplDb = null, refHist = [], calibUntil = 0, calibR = [], micRaw = null, chanTest = null, chanDiff = 0, quietPan = 0;
+// Hörmuschel-Kanal: der beim Mikro leiser ankommende; im Zweifel (knappes Messergebnis) trotzdem der leisere
+const earPan = () => quietPan || (chanDiff > 1 ? 1 : chanDiff < -1 ? -1 : 0);
 function readMic(dt, learnUp) {
   micAna.getFloatFrequencyData(micBins);
   let pk = -200;
@@ -2866,8 +2932,15 @@ function musicCorr() {
 const MIC_THR = 18;
 let noDrawT = 0, sensUp = 0, fbPen = 0;
 let breathState = "idle", micLo = 0, micHi = 0, micTot = 0, loFloor = 1e-7, totFloor = 1e-7, micBlow = 0;
-let evStart = 0, lungsBefore = 0, micOnSince = 0, micPrevSig = false, lungs = 0, lungsAt = 0, blowScore = .5, centroid = 0, lastBxBreath = 0, micHud = false;
+let drawOnset = 0, pauseDip = false, evStart = 0, lungsBefore = 0, micOnSince = 0, micPrevSig = false, lungs = 0, lungsAt = 0, blowScore = .5, centroid = 0, lastBxBreath = 0, micHud = false;
 function setCue(t) { $("cue").hidden = !t; $("cue").textContent = t || ""; }
+let windFloor = 1e-7, windDb = 0, windTilt = -60, windMus = -300, windOver = 99;
+function rawBand(lo, hi) {
+  if (!micRaw) return 0;
+  const hz = ac.sampleRate / micAna.fftSize; let p = 0;
+  for (let i = Math.max(1, Math.floor(lo / hz)); i < Math.min(micRaw.length, Math.floor(hi / hz)); i++) p += Math.pow(10, micRaw[i] / 10);
+  return p;
+}
 function bandPower(lo, hi) {
   const hz = ac.sampleRate / micAna.fftSize; let p = 0;
   for (let i = 0; i < micBins.length; i++) if (!Number.isFinite(micBins[i])) micBins[i] = -160;   // ungültige Messwerte vom Mikro
@@ -2900,7 +2973,21 @@ function breathStep(dt) {
   const thr = MIC_THR - sensUp + fbPen;
   // Grundrauschen nur nachführen, wenn der Lautsprecher still ist – sonst verfälscht das Herausrechnen der Musik die Messung
   const spkQuiet = !mGate && performance.now() - musicOffAt > 700 && refHist.every(([, q]) => q.reduce((a, v) => a + v, 0) < 1e-9);
-  if (breathState === "idle" && spkQuiet) { micFloor = track(micFloor, hi, dt); loFloor = track(loFloor, lo, dt); totFloor = track(totFloor, tot, dt); }
+  // ganz tiefes Windrauschen (unter 250 Hz) ungefiltert: Pusten aufs Mikro ist dort sehr laut, Handy-Lautsprecher bringen dort
+  // kaum etwas – das Herausrechnen der Musik würde es dagegen mit wegnehmen
+  const wind = rawBand(40, 250);
+  if (breathState === "idle" && spkQuiet) { micFloor = track(micFloor, hi, dt); loFloor = track(loFloor, lo, dt); totFloor = track(totFloor, tot, dt); windFloor = track(windFloor, wind, dt); }
+  windDb = 10 * Math.log10(Math.max(wind, 1e-30) / windFloor);
+  // Klangneigung ungefiltert: tiefes Windrauschen gegen Hochton-Zischen (unabhängig vom Grundrauschen) –
+  // Pusten liegt um 0 dB und darüber, Ziehen (auch mit Musik-Echo) deutlich darunter
+  // so viel Tiefbass kommt von der Musik selbst an: beim Ziehen (das selbst keinen Bass erzeugt) mit Spitzenwert gemerkt
+  windTilt = 10 * Math.log10(Math.max(wind, 1e-30) / Math.max(rawBand(3000, 9000), 1e-30));   // ab 3 kHz: dort ist die (steil gefilterte) Musik weg
+  const windAbs = 10 * Math.log10(Math.max(wind, 1e-30));
+  if (!mGate) windMus = -300;
+  // (nur im durchgehenden Teil des Zugs – ein Pusten nach kurzer Pause würde sich sonst selbst als "Musik" merken)
+  else windMus = breathState === "draw" && performance.now() - micLastOn < 100 && performance.now() - drawOnset > 700 ? Math.max(windMus - dt * 3, windAbs) : windMus - dt * 3;
+  windOver = windAbs - windMus;
+
   micHi = 10 * Math.log10(hi / micFloor); micLo = 10 * Math.log10(lo / loFloor); micTot = 10 * Math.log10(tot / totFloor);
   micDb = Math.max(micHi, micLo, micTot);
   // Was der Lautsprecher beisteuert, ist schon abgezogen; tiefe Bänder brauchen trotzdem mehr Abstand (Raumhall, Handgeräusche)
@@ -2913,6 +3000,8 @@ function breathStep(dt) {
   // Musik-Echo auf diesem Handy schon einmal erkannt: dann zählt nur Atem, der deutlich lauter ist als das Echo damals
   const hiOn = hiM > hiThr && (!mGate || hpRelNow() > musicLeak + 3);
   let sig = mGate ? hiOn : hiOn || micDb > onThr + 10;
+  // Pusten (mit Rauch in der Lunge) ist vor allem tiefes Windrauschen am Mikro: zählt auch bei laufender Musik, wenn es deutlich ist
+  if (!sig && lungs > .05 && windDb > onThr + 6 && windTilt > -12 && windOver > 10) sig = true;
   // schneller Hochton-Pegel (ungefiltert, ungeglättet)
   let hpDb = -200;
   if (hpAna) { hpAna.getFloatTimeDomainData(hpBuf); let q = 0; for (let i = 0; i < hpBuf.length; i++) q += hpBuf[i] * hpBuf[i]; hpDb = 10 * Math.log10(q / hpBuf.length + 1e-30); }
@@ -2959,15 +3048,26 @@ function breathStep(dt) {
   const wasSilent = !micPrevSig && now - micLastOn > 120; micPrevSig = sig;
   if (sig) micLastOn = now;
   const silentFor = now - micLastOn;
+  // Atempause im Zug: Musik weich absenken (statt nach dem Zug abrupt zu enden) – so überdeckt ihr Bass ein
+  // anschließendes Pusten nicht; setzt der Zug wieder ein, kommt sie sofort zurück
+  // (nach dem Zug bleibt sie abgesenkt, bis sie ausläuft – kein kurzes Wieder-Aufdrehen vor dem Ende)
+  const wantDip = mGate && !gap && (breathState === "draw" ? silentFor > 150 : pauseDip);
+  if (wantDip !== pauseDip && cOut && cAc === ac) {
+    pauseDip = wantDip; const t = ac.currentTime; cOut.gain.cancelScheduledValues(t);
+    cOut.gain.setTargetAtTime(wantDip ? cToneGain * .25 : cToneGain, t, wantDip ? .07 : .03);
+  }
 
   if (sig) {
     // 0 = Ziehen, 1 = Pusten
     const byCentroid = clamp((2200 - centroid) / 1600, 0, 1);
     const byBands = clamp((micLo - micHi) / 12 + .5, 0, 1);
-    const raw = byCentroid * .6 + byBands * .4;
+    const byWind = clamp((windTilt + 22) / 18, 0, 1) * clamp((windOver - 4) / 8, 0, 1);
+    // bei laufender Musik ist der bereinigte Bass unzuverlässig: dann zählt das tiefe Windrauschen mit
+    const raw = mGate ? Math.max(byCentroid * .6 + byBands * .4, byWind) : byCentroid * .5 + byBands * .3 + byWind * .2;
     blowScore = wasSilent ? raw : blowScore + (raw - blowScore) * Math.min(1, dt * 8);
   }
   if (sig && wasSilent) micOnSince = now;
+  if (sig && wasSilent && breathState === "draw") drawOnset = now;   // neuer Ansatz nach kurzer Pause mitten im (noch nicht beendeten) Zug
   micOnTime = sig ? (now - micOnSince) / 1000 : 0;   // echte Zeit, unabhängig von der Bildrate
   const drawRaw = clamp((micDb - thr) / 14, 0, 1);
   const blowRaw = clamp((micTot - thr) / 14, 0, 1.4);
@@ -2975,7 +3075,7 @@ function breathStep(dt) {
   if (breathState === "idle") {
     if (micOnTime > .12 && state === "lit" && now - musicOffAt > 450) {   // kurz nach Musikende hallt sie noch im Mikro nach
       // Ziehen ist der Normalfall. Pusten zählt nur, wenn Rauch in der Lunge ist UND der Klang eindeutig nach Pusten klingt.
-      breathState = lungs > .05 && blowScore > .7 ? "blow" : "draw";
+      breathState = lungs > .05 && blowScore > .62 ? "blow" : "draw";
       if (breathState === "draw") { drawing = true; drawTime = 0; drawFrom = bx; lastBxBreath = bx; evStart = now; lungsBefore = lungs; autoPuffAt = 0; noDrawT = 0; zugStart(now); }
     }
   } else if (breathState === "draw") {
@@ -2987,9 +3087,13 @@ function breathStep(dt) {
       if (mGate) { fbPen = Math.min(8, fbPen + 3); feedbackSeen(); if (drawLvl.length) musicLeak = clamp(Math.max(musicLeak, drawLvl.slice().sort((x, y) => x - y)[drawLvl.length >> 2] - 3), 0, 24); if (zugCounted && zugByThis) { drawCount = Math.max(0, drawCount - 1); zugCounted = false; } }
       // so lange zieht niemand: das ist Dauerlärm, als neues Grundrauschen übernehmen
       drawing = false; breathState = "idle"; sensUp = Math.max(0, sensUp - 3);
-      if (!mGate) { micFloor = hi / 4; loFloor = lo / 4; totFloor = tot / 4; }   // echter Dauerlärm: Grundrauschen knapp darunter neu ansetzen
+      if (!mGate) { micFloor = hi / 4; loFloor = lo / 4; totFloor = tot / 4; windFloor = wind / 4; }   // echter Dauerlärm: Grundrauschen knapp darunter neu ansetzen
     }
-    else if (lungsBefore > .05 && blowScore > .85) { drawing = false; breathState = "blow"; if (drawFrom - bx > r1 * .15) totalDrags++; }
+    // Ausatmen direkt nach dem Ziehen: nach einer kurzen Pause klingt der neue Ansatz nach Pusten -> Zug ist vorbei.
+    // Ohne Pause nur bei sehr eindeutigem Puste-Klang (sonst würde ein kräftiger Zug zum Pusten)
+    else if (lungs > .05 && ((now - drawOnset < 600 && micOnTime > .08 && blowScore > .6) || (now - evStart > 500 && blowScore > .86))) {
+      drawing = false; breathState = "blow"; lastDrawEnd = now; if (drawFrom - bx > r1 * .15) totalDrags++;
+    }
   } else if (breathState === "blow") {
     lungsAt = now;
     if (lungs > 0 && (exhaleT < 0 || exhaleSrc === "auto")) exhale(1, "mic");
@@ -3078,6 +3182,7 @@ function sanitize() {
   if (!ok(micFloor) || micFloor <= 0) micFloor = 1e-7;
   if (!ok(loFloor) || loFloor <= 0) loFloor = 1e-7;
   if (!ok(totFloor) || totFloor <= 0) totFloor = 1e-7;
+  if (!ok(windFloor) || windFloor <= 0) windFloor = 1e-7;
   smoke = smoke.filter(q => ok(q.x) && ok(q.y) && ok(q.vx) && ok(q.vy));
   sparks = sparks.filter(q => ok(q.x) && ok(q.y) && ok(q.vx) && ok(q.vy));
 }
