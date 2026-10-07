@@ -72,10 +72,11 @@ html, body { margin: 0; }
 .overlay.va { gap: 12px; background: radial-gradient(ellipse 90% 45% at 50% 108%, rgba(255,100,25,.38), rgba(255,100,25,0) 70%), radial-gradient(ellipse at center, rgba(11,10,9,.55), rgba(11,10,9,.92)); }
 .va-title { margin: calc(-1 * clamp(10px, 4vh, 40px)) 0 4px; padding: .1em .16em .04em; display: flex; flex-direction: column; align-items: center; font: 400 clamp(54px, 17vw, 104px)/.86 Bangers, Impact, sans-serif !important; letter-spacing: .03em; transform: rotate(-3deg);
   background: linear-gradient(180deg, #fff6d0 0%, #ffd27a 32%, #ff8a2a 58%, #e2400f 80%, #8a1d06 100%); -webkit-background-clip: text; background-clip: text; color: transparent;
-  filter: drop-shadow(0 0 18px rgba(255,120,30,.55)) drop-shadow(0 4px 0 #2a0c05); animation: vaGlow 2.6s ease-in-out infinite alternate; }
+  filter: drop-shadow(0 0 18px rgba(255,120,30,.55)) drop-shadow(0 4px 0 #2a0c05); animation: vaGlow 1.6s ease-in-out infinite, vaBeat 1.6s ease-in-out infinite; }
+@keyframes vaBeat { 0%, 100% { transform: rotate(-3deg) scale(1); } 50% { transform: rotate(-3deg) scale(1.055); } }
 .va-title span { padding-right: .06em; }   /* Bangers ist kursiv: Platz für die Oberkante des letzten Buchstabens */
 .va-title span:last-child { font-size: 1.32em; }
-@keyframes vaGlow { to { filter: drop-shadow(0 0 30px rgba(255,140,40,.85)) drop-shadow(0 4px 0 #2a0c05); } }
+@keyframes vaGlow { 50% { filter: drop-shadow(0 0 30px rgba(255,140,40,.85)) drop-shadow(0 4px 0 #2a0c05); } }
 .va-lead { color: var(--ink) !important; font-size: 15px !important; max-width: 30ch; margin: 2px 0 0 !important; }
 .va-steps { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-wrap: wrap; justify-content: center; gap: 12px 10px; width: min(100%, 360px); }
 .va-steps li { flex: 0 0 auto; padding: 11px 16px; border-radius: 12px; background: linear-gradient(135deg, rgba(255,140,50,.16), rgba(255,140,50,.04)); border: 1px solid rgba(255,150,70,.32);
