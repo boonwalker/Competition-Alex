@@ -44,6 +44,8 @@ html, body { margin: 0; }
 .trip.on { opacity: 1; }
 /* Traumränder: weiche Wolken am Bildschirmrand, innen ein warmer Glutschimmer; atmen ganz langsam */
 .dream { position: absolute; inset: -4%; pointer-events: none; background-size: 100% 100%; animation: dreamy 5s ease-in-out infinite alternate, emberGlow 1.9s ease-in-out infinite alternate; }
+.dream.hot { animation: dreamyHot 5s ease-in-out infinite alternate, emberGlow 1.3s ease-in-out infinite alternate; transition: opacity .12s linear; }
+@keyframes dreamyHot { from { transform: scale(1); } to { transform: scale(1.035) rotate(.4deg); } }   /* ohne Deckkraft: die steuert das Ziehen */
 @keyframes emberGlow { 0% { filter: brightness(.92) saturate(1); } 40% { filter: brightness(1.12) saturate(1.15); } 70% { filter: brightness(.98) saturate(1.05); } 100% { filter: brightness(1.2) saturate(1.2); } }
 @keyframes dreamy { from { transform: scale(1); opacity: .92; } to { transform: scale(1.035) rotate(.4deg); opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .dream { animation: none; } }
@@ -98,6 +100,7 @@ button:focus-visible { outline: 2px solid var(--ember); outline-offset: 3px; }
   <video id="tripVid0" src="strand.mp4" poster="strand.jpg" muted playsinline webkit-playsinline preload="auto" disablepictureinpicture></video>
   <video id="tripVid1" src="trip2.mp4" poster="trip2.jpg" muted playsinline webkit-playsinline preload="auto" disablepictureinpicture hidden></video>
   <div class="dream" id="dream" hidden></div>
+  <div class="dream hot" id="dreamHot" hidden></div>
 </div>
 <div class="hud" id="micHud" hidden></div>
 
@@ -1129,7 +1132,7 @@ function drawJointPart(t, R, lit) {
 
 // Verbiegen beim Ausdrücken: der Stummel knickt je nach Restlänge in 1–3 Bögen ein und schlängelt kurz nach
 const bendOn = () => state === "stub" || (state === "out" && smears.length > 0);
-// Ausdrücken in 2–3 schnellen Stößen. Jeder Stoß staucht weiter; das Papierrohr knickt an einzelnen Stellen ein,
+// Ausdrücken in zwei schnellen Stößen. Jeder Stoß staucht weiter; das Papierrohr knickt an einzelnen Stellen ein,
 // dazwischen bleiben die Stücke gerade (wie echtes gestauchtes Papier), an den Knicken plattet es sich etwas ab.
 let stubKinks = [], pushT = [], pushFired = [], stubC = 0, curveY = null, curveTh = null, curveXs = 0, curveLen = 1;
 const PUSH_DUR = .13, STUB_LOWER = .16;
@@ -1481,6 +1484,7 @@ function update(dt, t) {
   if (state === "lit") { diveCheck(); autoPuff(); updateTilt(dt); }
   // Stop-and-go: Musik nur, solange wirklich gezogen wird (Finger in Bewegung bzw. Ziehgeräusch)
   tripCheck(dt);
+  if (trip.on) dreamGlow(dt);
   const tripMute = trip.on && trip.clip && trip.clip.noMusic && trip.phase === "video";   // beim zweiten Video nur dessen Ton; beim Rückflug setzt die Musik wieder ein
   const ag2 = state === "lit" ? afterglow() : 0;
   if (mGate && ag2 < .4 && !trip.on && !(state === "lit" && drawingNow())) stopFade = .35;   // am Ende des Nachglühens kurz ausblenden
@@ -1891,7 +1895,7 @@ function diveUpdate(dt) {
 
 // ---------- Ausflüge aus der Glut: Videos nach abgebranntem Anteil (beim nächsten Zug ohne gedrückt gehaltenen Bildschirm) ----------
 // Gedrückt halten führt dagegen immer in die Glutwelt.
-//  ab 1/4 abgebrannt: Strand-Video des Spielers, quer und bildfüllend, mit wolkigen Traumrändern, höchstens 3 s
+//  ab 1/4 abgebrannt: Strand-Video des Spielers, quer und bildfüllend, mit wolkigen Traumrändern (Glutnest, glüht beim Ziehen auf), höchstens 4 s
 //  ab 2/5 abgebrannt: Animations-Video (die letzten 7 s), quer (auf dem Hochkant-Bildschirm gedreht), läuft ganz durch
 // Nach der Rückkehr (Video oder Glutwelt) glimmt der Joint noch kurz kräftig weiter und die Musik läuft aus –
 // dann wird beides sicher gestoppt (sonst hält die Musik im Mikro das Abbrennen am Laufen)
@@ -1902,7 +1906,7 @@ const afterglow = () => {
   return Math.max(a, d);
 };
 const TRIPS = [
-  { frac: 1 / 4, audio: "strand.mp3", orient: "landscape", maxMs: 3000, gain: .55, dream: true },
+  { frac: 1 / 4, audio: "strand.mp3", orient: "landscape", maxMs: 4000, gain: .55, dream: true },
   // läuft immer ganz durch (Antippen, Bewegung usw. beenden es nicht), nur mit eigenem Ton – ohne Hintergrundmusik
   { frac: 2 / 5, audio: "trip2.mp3", orient: "landscape", maxMs: 8500, gain: .7, locked: true, noMusic: true },
 ];
@@ -1956,76 +1960,76 @@ function tripUpdate(dt) {
 // Wolkige Traumränder einmal pro Bildschirmgröße zeichnen
 let dreamKey = "";
 function dreamFrame() {
-  const el = document.getElementById("dream"), w = Math.round(W * 1.08), h = Math.round(H * 1.08), key = w + "x" + h;
+  const el = document.getElementById("dream"), hotEl = document.getElementById("dreamHot"), w = Math.round(W * 1.08), h = Math.round(H * 1.08), key = w + "x" + h;
   if (key === dreamKey) return; dreamKey = key;
-  const sc = Math.min(2, dpr), c = document.createElement("canvas"); c.width = Math.round(w * sc); c.height = Math.round(h * sc);
-  const g = c.getContext("2d"); g.scale(sc, sc);
+  const sc = Math.min(2, dpr), mk = () => { const c = document.createElement("canvas"); c.width = Math.round(w * sc); c.height = Math.round(h * sc); const g = c.getContext("2d"); g.scale(sc, sc); return [c, g]; };
+  const [c, g] = mk(), [c2, g2] = mk();
   const m = Math.min(w, h), cx = w / 2, cy = h / 2;
-  // Abstand zum Rand (0 = Rand, 1 = Mitte), etwas unregelmäßig: so wird der Rahmen zum Glutnest statt zum Rechteck
+  // Abstand zum Rand (0 = Rand, 1 = Mitte); der Rahmen ragt 4 % über den Bildschirm hinaus
   const edgeD = (x, y) => Math.min(x, w - x, y, h - y) / (m * .5);
-  const pick = (lo, hi) => { for (let t = 0; t < 30; t++) { const x = Math.random() * w, y = Math.random() * h, d = edgeD(x, y) + (Math.random() - .5) * .08; if (d >= lo && d <= hi) return [x, y, d]; } return [Math.random() * w, 0, 0]; };
-  // warmer Glutschimmer nach innen
-  const ring = g.createRadialGradient(cx, cy, m * .28, cx, cy, Math.max(w, h) * .62);
-  ring.addColorStop(0, "rgba(255,150,60,0)"); ring.addColorStop(.5, "rgba(255,140,50,.18)"); ring.addColorStop(.78, "rgba(255,110,30,.38)"); ring.addColorStop(1, "rgba(150,40,8,.6)");
+  const pick = (lo, hi) => { for (let t = 0; t < 30; t++) { const x = Math.random() * w, y = Math.random() * h, d = edgeD(x, y) + (Math.random() - .5) * .05; if (d >= lo && d <= hi) return [x, y, d]; } return [Math.random() * w, 0, 0]; };
+  // dezenter warmer Schimmer nach innen
+  const ring = g.createRadialGradient(cx, cy, m * .32, cx, cy, Math.max(w, h) * .62);
+  ring.addColorStop(0, "rgba(255,150,60,0)"); ring.addColorStop(.6, "rgba(255,140,50,.1)"); ring.addColorStop(.85, "rgba(255,110,30,.22)"); ring.addColorStop(1, "rgba(120,35,8,.4)");
   g.fillStyle = ring; g.fillRect(0, 0, w, h);
-  // Traumwolken: dichter und heller als zuvor, zwischen Glutnest und Bild
-  for (let i = 0; i < 260; i++) {
-    const [ex, ey, d] = pick(.12, .62), r = m * rand(.08, .22) * (1.15 - d * .7), warm = Math.random(), k = 1 - d / .62;
+  // Traumwolken
+  for (let i = 0; i < 240; i++) {
+    const [ex, ey, d] = pick(.1, .6), r = m * rand(.08, .22) * (1.15 - d * .7), warm = Math.random(), k = 1 - d / .6;
     const bg = g.createRadialGradient(ex, ey, 0, ex, ey, r);
     const col = warm < .3 ? "255,214,170" : warm < .5 ? "255,186,128" : "252,246,238";
-    bg.addColorStop(0, `rgba(${col},${(.12 + .3 * k).toFixed(2)})`); bg.addColorStop(.55, `rgba(${col},${(.05 + .13 * k).toFixed(2)})`); bg.addColorStop(1, `rgba(${col},0)`);
+    bg.addColorStop(0, `rgba(${col},${(.12 + .28 * k).toFixed(2)})`); bg.addColorStop(.55, `rgba(${col},${(.05 + .12 * k).toFixed(2)})`); bg.addColorStop(1, `rgba(${col},0)`);
     g.fillStyle = bg; g.fillRect(ex - r, ey - r, r * 2, r * 2);
   }
-  // Glutnest am Rand: verkohlter Grund ...
-  for (let i = 0; i < 160; i++) {
-    const [ex, ey, d] = pick(0, .28), r = m * rand(.05, .12), bg = g.createRadialGradient(ex, ey, 0, ex, ey, r);
-    bg.addColorStop(0, `rgba(28,8,3,${Math.max(0, .9 - d * 2.6).toFixed(2)})`); bg.addColorStop(1, "rgba(28,8,3,0)");
+  // schmaler, weicher verkohlter Saum
+  for (let i = 0; i < 220; i++) {
+    const [ex, ey, d] = pick(0, .17), r = m * rand(.03, .07), bg = g.createRadialGradient(ex, ey, 0, ex, ey, r);
+    bg.addColorStop(0, `rgba(30,9,3,${Math.max(0, .55 - d * 3).toFixed(2)})`); bg.addColorStop(1, "rgba(30,9,3,0)");
     g.fillStyle = bg; g.fillRect(ex - r, ey - r, r * 2, r * 2);
   }
-  // ... darauf glühende und verkohlte Brocken mit leuchtenden Rissen dazwischen
-  const coals = [];
-  // (der Rahmen ragt 4 % über den Bildschirm hinaus: das Nest beginnt erst dort richtig dicht)
-  for (let i = 0; i < 1100; i++) { const [x, y, d] = pick(.04, .3), f = clamp(1 - (d - .06) / .24, 0, 1); if (Math.random() > .25 + f) continue; coals.push({ x, y, d, r: m * rand(.008, .032) * (.5 + .7 * f), hot: Math.random() < .2 + .35 * f }); }
-  coals.sort((a, b) => b.d - a.d);
-  g.globalCompositeOperation = "lighter";
-  for (const k of coals) {   // Glut zwischen den Brocken
-    const rr = k.r * 2.4, bg = g.createRadialGradient(k.x, k.y, 0, k.x, k.y, rr);
-    bg.addColorStop(0, `rgba(255,120,30,${k.hot ? .55 : .2})`); bg.addColorStop(1, "rgba(255,60,0,0)");
-    g.fillStyle = bg; g.fillRect(k.x - rr, k.y - rr, rr * 2, rr * 2);
-  }
-  g.globalCompositeOperation = "source-over";
-  for (const k of coals) {
-    const n = 5 + (Math.random() * 5 | 0), rot = Math.random() * 6.283, sq = rand(.6, 1);
-    g.beginPath();
-    for (let q = 0; q < n; q++) { const a = q / n * 6.283 + rand(-.35, .35), rr = k.r * rand(.45, 1.15), px = Math.cos(a) * rr, py = Math.sin(a) * rr * sq; g.lineTo(k.x + px * Math.cos(rot) - py * Math.sin(rot), k.y + px * Math.sin(rot) + py * Math.cos(rot)); }
-    g.closePath();
-    const ox = rand(-.3, .3) * k.r, oy = rand(-.3, .3) * k.r, bg = g.createRadialGradient(k.x + ox, k.y + oy, 0, k.x, k.y, k.r * 1.1);
-    if (k.hot) { bg.addColorStop(0, "#ffd27a"); bg.addColorStop(.18, "#ff8c26"); bg.addColorStop(.5, "#b8320a"); bg.addColorStop(.85, "#4a0e04"); bg.addColorStop(1, "#1c0603"); }
-    else { bg.addColorStop(0, "#3a1a10"); bg.addColorStop(.55, "#1a0c07"); bg.addColorStop(1, "#080403"); }
-    g.fillStyle = bg; g.fill();
-    g.save(); g.clip();
-    for (let q = 0; q < 4; q++) {   // verkohlte Kruste bzw. Aschebelag in Flecken
-      const fx = k.x + rand(-1, 1) * k.r, fy = k.y + rand(-1, 1) * k.r, fr = k.r * rand(.2, .55);
-      g.fillStyle = k.hot ? `rgba(28,8,3,${rand(.35, .7).toFixed(2)})` : `rgba(140,130,120,${rand(.1, .3).toFixed(2)})`;
-      g.beginPath(); g.ellipse(fx, fy, fr, fr * rand(.4, .9), rand(0, 3), 0, 7); g.fill();
+  // sehr viele feine Glutkrümel: im Grund dunkel (Kruste, Asche), in der Glut-Ebene ihr Glühen
+  for (let i = 0; i < 2600; i++) {
+    const [x, y, d] = pick(.05, .2), f = clamp(1 - (d - .07) / .13, 0, 1); if (Math.random() > .2 + f) continue;
+    const r = m * rand(.0025, .01) * (.6 + .5 * f), n = 4 + (Math.random() * 4 | 0), rot = Math.random() * 6.283, hot = Math.random() < .25 + .35 * f;
+    const path = gg => { gg.beginPath(); for (let q = 0; q < n; q++) { const a = rot + q / n * 6.283 + rand(-.4, .4), rr = r * rand(.5, 1.15); gg.lineTo(x + Math.cos(a) * rr, y + Math.sin(a) * rr); } gg.closePath(); };
+    path(g); g.fillStyle = Math.random() < .15 ? `rgba(130,122,114,${rand(.3, .6).toFixed(2)})` : `rgba(${rand(14, 40) | 0},${rand(6, 16) | 0},${rand(3, 8) | 0},${(.5 + .4 * f).toFixed(2)})`; g.fill();
+    if (hot) {
+      const gr = r * 3.2, hg = g2.createRadialGradient(x, y, 0, x, y, gr);
+      hg.addColorStop(0, `rgba(255,140,40,${(.25 + .25 * f).toFixed(2)})`); hg.addColorStop(1, "rgba(255,60,0,0)");
+      g2.globalCompositeOperation = "lighter"; g2.fillStyle = hg; g2.fillRect(x - gr, y - gr, gr * 2, gr * 2);
+      g2.globalCompositeOperation = "source-over"; path(g2);
+      const cg = g2.createRadialGradient(x, y, 0, x, y, r); cg.addColorStop(0, "#ffe2a0"); cg.addColorStop(.45, "#ff8a26"); cg.addColorStop(1, "#8a2206");
+      g2.fillStyle = cg; g2.fill();
     }
-    g.restore();
-    g.strokeStyle = k.hot ? "rgba(255,170,70,.35)" : `rgba(255,90,20,${rand(.15, .45).toFixed(2)})`; g.lineWidth = .7; g.stroke();   // glimmende Bruchkanten
   }
-  // Funken und kleine Glutpunkte, die ins Bild schweben
-  g.globalCompositeOperation = "lighter";
-  for (let i = 0; i < 140; i++) {
-    const [x, y] = pick(.05, .4), r = rand(.8, 2.6), bg = g.createRadialGradient(x, y, 0, x, y, r * 3);
-    bg.addColorStop(0, "rgba(255,235,170,.95)"); bg.addColorStop(.35, "rgba(255,140,40,.55)"); bg.addColorStop(1, "rgba(255,60,0,0)");
-    g.fillStyle = bg; g.fillRect(x - r * 3, y - r * 3, r * 6, r * 6);
+  // weicher Glutschein am Rand und Funken (Glut-Ebene)
+  g2.globalCompositeOperation = "lighter";
+  for (let i = 0; i < 90; i++) {
+    const [ex, ey, d] = pick(.04, .18), r = m * rand(.04, .09), bg = g2.createRadialGradient(ex, ey, 0, ex, ey, r);
+    bg.addColorStop(0, `rgba(255,110,30,${Math.max(0, .22 - d * .8).toFixed(2)})`); bg.addColorStop(1, "rgba(255,60,0,0)");
+    g2.fillStyle = bg; g2.fillRect(ex - r, ey - r, r * 2, r * 2);
+  }
+  for (let i = 0; i < 110; i++) {
+    const [x, y] = pick(.08, .35), r = rand(.6, 1.8), bg = g2.createRadialGradient(x, y, 0, x, y, r * 3);
+    bg.addColorStop(0, "rgba(255,235,170,.9)"); bg.addColorStop(.35, "rgba(255,140,40,.5)"); bg.addColorStop(1, "rgba(255,60,0,0)");
+    g2.fillStyle = bg; g2.fillRect(x - r * 3, y - r * 3, r * 6, r * 6);
   }
   el.style.backgroundImage = `url(${c.toDataURL("image/png")})`;
+  hotEl.style.backgroundImage = `url(${c2.toDataURL("image/png")})`;
+}
+// Traumrand glüht beim Ziehen auf und glimmt danach wieder ab (Mikro bzw. Finger, wie in der Glutwelt)
+function dreamGlow(dt) {
+  const c = trip.clip; if (!c || !c.dream || trip.phase !== "video") return;
+  if (!trip.ds) trip.ds = {};
+  const s = drawStrength(dt, trip.ds), target = s > .1 ? .45 + .55 * Math.min(1, s) : .2;
+  trip.glow = (trip.glow ?? .5) + (target - (trip.glow ?? .5)) * Math.min(1, dt * (target > (trip.glow ?? .5) ? 7 : 1.6));
+  const hot = document.getElementById("dreamHot"); hot.style.opacity = trip.glow.toFixed(3);
 }
 function showTrip() {
   const c = trip.clip, v = c.vid;
   trip.phase = "video";
   TRIPS.forEach(o => o.vid.hidden = o !== c);
-  const dr = document.getElementById("dream"); dr.hidden = !c.dream; if (c.dream) dreamFrame();
+  const dr = document.getElementById("dream"); dr.hidden = !c.dream; document.getElementById("dreamHot").hidden = !c.dream;
+  if (c.dream) { dreamFrame(); trip.ds = {}; trip.glow = .5; }
   let rot = 0;
   if (c.orient === "landscape" && H > W) {
     // Querformat auf dem Hochkant-Bildschirm: gedreht, so dass oben beim Halten oben ist (Sensor), sonst Boden links angenommen
@@ -2057,7 +2061,11 @@ function tripSound() {
   if (trip.src) { try { trip.src.stop(); } catch (e) {} }
   const src = ac.createBufferSource(), g = ac.createGain();
   src.buffer = c.buf; g.gain.value = c.gain;
-  src.connect(g).connect(master); src.start(ac.currentTime, clamp(c.vid.currentTime || 0, 0, c.buf.duration - .1));
+  if (c.dream && mode === "breath" && micStream) {
+    // Ziehen lässt den Traumrand aufglühen: Meeresrauschen dafür über ~3 kHz abschneiden und über die Hörmuschel
+    let n = src; for (let i = 0; i < 3; i++) { const lp = ac.createBiquadFilter(); lp.type = "lowpass"; lp.frequency.value = 2800; lp.Q.value = .7; n = n.connect(lp); }
+    const pn = ac.createStereoPanner(); pn.pan.value = earPan(); n.connect(g).connect(pn).connect(master);
+  } else src.connect(g).connect(master); src.start(ac.currentTime, clamp(c.vid.currentTime || 0, 0, c.buf.duration - .1));
   trip.src = src; trip.gain = g;
 }
 // Video aus, Kamera fliegt aus der Glut zurück zum Joint
@@ -2290,13 +2298,13 @@ function newCreature(u, ground, wallTop, scatter, wd) {
 }
 // Wie stark gerade gezogen wird: Mikro (Atem-Modus) oder Fingerbewegung (Finger-Modus)
 let lastFingerMove = 0, wLeakK = -300;
-function drawStrength(dt) {
+function drawStrength(dt, w = world) {
   const now = performance.now(), finger = now - lastFingerMove < 160 ? 1 : (pid !== null && drawing ? .3 : 0);
   if (mode === "breath" && micAna && ac) {
     readMic(dt, false);
     // Hochtonband über 4,5 kHz, um den bekannten Lautsprecher-Anteil bereinigt: dort ist Atem laut,
     // Musik und Weltgeräusche (steil tiefpassgefiltert) sind praktisch weg
-    const hi = bandPower(4500, 10000), w = world;
+    const hi = bandPower(4500, 10000);
     if (!(w.hpFl > 0)) w.hpFl = w.fl0 = Math.max(hiFloor3, 1e-13);
     // gelerntes Lautsprecher-Echo: Verzerrungs-Obertöne wachsen schneller (in dB) als die gespielte Lautstärke;
     // geglättet, weil das Mikro dem Lautsprecher verzögert und gemittelt folgt
