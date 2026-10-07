@@ -276,7 +276,12 @@ function gravScreen() {
   return [orient ? 1 : -1, 0];
 }
 // beim Ausdrücken: nach dem letzten Stoß wird die Lage festgehalten – Stummel und Asche bleiben dann liegen, egal wie das Handy gedreht wird
-const stubGrav = () => (stubPose && stubPose.gLock) || gravScreen();
+// Waage beim Ausdrücken: gemessene Lage, aber zur linken langen Bildschirmseite (Querhaltung, Hörmuschel links) als Nullpunkt hingezogen
+function stubLevel(g) {
+  const a = Math.atan2(g[1], g[0]), b = orient ? 0 : Math.PI, d = Math.atan2(Math.sin(b - a), Math.cos(b - a)), r = a + d * .4;
+  return [Math.cos(r), Math.sin(r)];
+}
+const stubGrav = () => (stubPose && stubPose.gLock) || stubLevel(gravScreen());
 // dieselbe Richtung im Koordinatensystem des Joints (für fallende Asche, Funken, Aschenbecherboden)
 function updateG() {
   if (!frameInv) return;
@@ -1474,7 +1479,7 @@ function update(dt, t) {
   if (state === "stub") {
     stubT += dt;
     if (stubPose) {   // folgt bis zum Ende des letzten Stoßes der gemessenen Lage, danach bleibt alles liegen
-      if (!stubPose.gLock && stubT > pushT[pushT.length - 1] + PUSH_DUR + .15) stubPose.gLock = gravScreen();
+      if (!stubPose.gLock && stubT > pushT[pushT.length - 1] + PUSH_DUR + .15) stubPose.gLock = stubLevel(gravScreen());
       stubPose.k = easeIO(clamp(stubT / STUB_LOWER, 0, 1)); buildFrame();
     }
     const R = radius(bx);
@@ -1768,6 +1773,7 @@ function floorXf() {
   }
   const gl = Math.hypot(gX, gY) || 1, gx = gX / gl, gy = gY / gl;
   ctx.transform(-gy, gx, gx, gy, bx + radius(bx) * .12, bendY(bx));
+  return [gx, gy];
 }
 function drawCrumple(t) {
   if (state !== "stub" && !(state === "out" && smears.length)) return;
@@ -1787,8 +1793,10 @@ function drawCrumple(t) {
   }
   ctx.restore(); ctx.restore();
   // Aschehaufen auf dem Aschenbecherboden rund um die aufgesetzte Spitze: breit auseinandergedrückt, flach aufgeschichtet
-  ctx.save(); floorXf();
-  const S = R * (1.25 + .8 * c) + ashLen0 * .14 * c, Hh = R * (.5 + .4 * c), fy = R * .25;   // fy: Bodenlinie
+  ctx.save(); const [fgx, fgy] = floorXf();
+  // Bodenlinie durch den tiefsten Punkt der Stummelspitze; der Haufen reicht bis über die Spitze hinauf und hängt so an ihr
+  const fy = Math.max(R * .15, R * Math.abs(fgy) * .95 - R * .12 * fgx);
+  const S = R * (.95 + .55 * c) + ashLen0 * .1 * c, Hh = fy + R * (.25 + .25 * c);
   const P = (u, v) => [u * S, fy - Math.pow(Math.max(0, 1 - u * u), .6) * Hh * v];
   // Schatten des Haufens auf der Unterlage
   ctx.save(); ctx.translate(0, fy); ctx.scale(1, .28);
@@ -1822,6 +1830,17 @@ function drawCrumple(t) {
     if (x.hi) { ctx.fillStyle = "rgba(235,235,240,.65)"; ctx.fillRect(-sz * .35, -sz * .45, sz * .3, sz * .22); }
     ctx.restore();
   }
+  // Asche, die an der gestauchten Spitze selbst klebt (im Koordinatensystem des Stummels)
+  ctx.restore(); ctx.save(); ctx.translate(bx, yb); ctx.rotate(th); ctx.translate(-bx, 0);
+  for (let i = 0; i < 26; i++) {
+    const grow = clamp((c - hsh(i * 3.3) * .5) / .5, 0, 1); if (grow <= 0) continue;
+    const x = bx + R * (hsh(i * 1.7 + crushSeed[0]) * .45 - .08), y = (hsh(i * 2.9 + crushSeed[1]) * 2 - 1) * R * .95, sz = R * (.08 + hsh(i * 5.1) * .16) * (.6 + .4 * grow);
+    const v = 22 + hsh(i * 7.7) * 50, n = 6 + (i % 4), rot = hsh(i) * 6.283;
+    ctx.beginPath(); for (let q = 0; q < n; q++) { const a = rot + q / n * 6.283, rr = sz * (.6 + .45 * hsh(i * 13 + q)); ctx.lineTo(x + Math.cos(a) * rr, y + Math.sin(a) * rr * .85); } ctx.closePath();
+    ctx.fillStyle = `rgb(${v + 6 | 0},${v + 3 | 0},${v | 0})`; ctx.fill(); ctx.strokeStyle = "rgba(6,5,4,.5)"; ctx.lineWidth = .5; ctx.stroke();
+    if (hsh(i * 9.1) < .4) { ctx.fillStyle = "rgba(220,220,225,.5)"; ctx.fillRect(x - sz * .2, y - sz * .3, sz * .18, sz * .12); }
+  }
+  ctx.restore(); ctx.save(); floorXf();
   // lose Krümel auf dem Boden links und rechts des Haufens
   for (let i = 0; i < 50; i++) {
     const u = (hsh(i + crushSeed[1]) - .5) * 3.4 * c, x = u * S * .9, y = fy - hsh(i * 3 + crushSeed[2]) * R * .12, sz = R * (.012 + hsh(i + 3) * .03);
