@@ -762,7 +762,7 @@ function musicTone(now) {
   const tone = state === "dive" ? "world" : trip.on ? "video" : musicQuiet() ? "quiet" : "full";
   if (tone === cTone) return;
   cTone = tone;
-  const [f, g] = { full: [20000, 1], quiet: [2000, 1], world: [700, .45], video: [1800, .7] }[tone], t = ac.currentTime, tc = now === true ? .001 : .25;
+  const [f, g] = { full: [20000, 1], quiet: [2000, 1], world: [1100, .7], video: [1800, .7] }[tone], t = ac.currentTime, tc = now === true ? .001 : .25;
   for (const n of [cFilter, cFilter2]) { n.frequency.cancelScheduledValues(t); n.frequency.setTargetAtTime(f, t, tc); }
   cOut.gain.cancelScheduledValues(t); cOut.gain.setTargetAtTime(g, t, tc);
 }
@@ -1544,6 +1544,7 @@ function tripCheck(dt) {
   trip.run = drawingNow() ? trip.run + dt : 0;
   if (drawCount >= 3 && trip.run > .3) startTrip();   // der dritte Zug läuft
 }
+const TRIP_MS = 3000;
 function startTrip() {
   trip.played = true; trip.on = true; trip.still = false;
   // Kameraflug wie in die Glutwelt: auf die Glut zoomen, hineindrehen, dann das Video
@@ -1573,9 +1574,8 @@ function showTrip() {
   setTimeout(() => {
     if (trip.phase !== "video" || (!tripVid.paused && tripVid.currentTime > 0)) return;
     trip.still = true; tripEl.classList.add("still"); tripSound();
-    clearTimeout(trip.timer); trip.timer = setTimeout(stopTrip, 9500);
   }, 1500);
-  clearTimeout(trip.timer); trip.timer = setTimeout(stopTrip, 11500);
+  clearTimeout(trip.timer); trip.timer = setTimeout(stopTrip, TRIP_MS);   // spätestens nach 3 s fliegt die Kamera zurück
 }
 function tripSound() {
   decodeTrip();
@@ -1601,7 +1601,7 @@ function stopTrip(abort) {
 tripEl.addEventListener("pointerdown", e => {
   e.stopPropagation();
   if (trip.phase !== "video") return;
-  if (trip.still) { trip.still = false; clearTimeout(trip.timer); trip.timer = setTimeout(stopTrip, 11000); tripVid.play().catch(() => {}); return; }
+  if (trip.still) { trip.still = false; tripVid.play().catch(() => {}); return; }
   stopTrip();
 });
 
