@@ -2369,7 +2369,12 @@ function readMic(dt, learnUp) {
   if (!cplDb) cplDb = new Float32Array(MB.length - 1).fill(-14);
   const hz = ac.sampleRate / micAna.fftSize, now = performance.now(), calib = now < calibUntil, quietUser = breathState === "idle" && pid === null;
   if (!calib && calibR.length) {
-    calibR.forEach((a, b) => { if (a && a.length >= 4) { a.sort((x, y) => x - y); cplDb[b] = clamp(a[Math.floor(a.length * .5)], -60, 6); } });
+    const got = cplDb.map(() => 0);
+    calibR.forEach((a, b) => { if (a && a.length >= 4) { a.sort((x, y) => x - y); cplDb[b] = clamp(a[Math.floor(a.length * .5)], -60, 6); got[b] = 1; } });
+    // Bänder ohne Messwerte (die Aufnahme hat dort kaum Energie) übernehmen den Wert des nächsten gemessenen Nachbarn
+    for (let b = 0; b < cplDb.length; b++) if (!got[b]) {
+      for (let d = 1; d < cplDb.length; d++) { if (got[b + d]) { cplDb[b] = cplDb[b + d]; break; } if (got[b - d]) { cplDb[b] = cplDb[b - d]; break; } }
+    }
     calibR = [];
   }
   // Bandpegel des Ausgangs der letzten 0,35 s: deckt die unbekannte Laufzeit Lautsprecher -> Mikro ab
