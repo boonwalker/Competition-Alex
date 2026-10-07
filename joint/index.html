@@ -51,8 +51,11 @@ html, body { margin: 0; }
 .overlay { position: fixed; inset: 0; overflow-y: auto; padding-block: 24px; display: flex; flex-direction: column; align-items: center; justify-content: safe center; gap: 14px; text-align: center; padding-inline: 16px; z-index: 2; background: radial-gradient(ellipse at center, rgba(11,10,9,.35), rgba(11,10,9,.85)); transition: opacity .8s; }
 .overlay.gone { opacity: 0; pointer-events: none; }
 .overlay h1 { font-family: var(--display); font-weight: 600; font-size: clamp(30px, 7vw, 56px); margin: 0; line-height: 1; letter-spacing: -.01em; }
-.soundon { font: 600 clamp(18px, 4vw, 24px) var(--display) !important; color: var(--ember) !important; letter-spacing: .02em; text-shadow: 0 0 18px rgba(255,138,42,.45), 0 1px 8px rgba(0,0,0,.9); animation: pulse 1.6s ease-in-out infinite; }
-@keyframes pulse { 50% { opacity: .65; } }
+.soundon { font: 600 clamp(21px, 5vw, 28px) var(--display) !important; color: #ffa04a !important; letter-spacing: .02em; text-shadow: 0 0 18px rgba(255,138,42,.55), 0 1px 8px rgba(0,0,0,.9); animation: pulse 1.25s ease-in-out infinite; }
+@keyframes pulse {
+  0%, 100% { transform: scale(1); opacity: .8; text-shadow: 0 0 12px rgba(255,138,42,.35), 0 1px 8px rgba(0,0,0,.9); }
+  50% { transform: scale(1.1); opacity: 1; color: #ffc27a; text-shadow: 0 0 26px rgba(255,150,50,.95), 0 0 6px rgba(255,200,120,.8), 0 1px 8px rgba(0,0,0,.9); }
+}
 @media (prefers-reduced-motion: reduce) { .soundon { animation: none; } }
 .overlay p.lead { color: var(--ink); font-size: 17px; max-width: 30ch; text-shadow: 0 1px 10px rgba(0,0,0,.9), 0 0 3px rgba(0,0,0,.8); }
 /* Aufkleber mit den Aktionen: leicht schief, gestanzter weißer Rand */
@@ -93,7 +96,7 @@ button:focus-visible { outline: 2px solid var(--ember); outline-offset: 3px; }
   <p class="soundon">🔊 Ton an!</p>
   <button class="go" id="light">🔥 Anzünden</button>
   <p class="status" id="status"></p>
-  <p class="fine">Für das volle Spielerlebnis unbedingt auf dem Handy im Browser spielen – mit Zugriff auf Mikrofon und Bewegungssensoren!</p>
+  <p class="fine">Für das volle Spielerlebnis unbedingt auf dem Handy im Browser spielen – mit Zugriff auf Mikrofon und Bewegungssensoren und aktivierter Ausrichtungssperre!</p>
   <div class="settings" hidden>
     <div class="group">
       <span class="lbl">Ziehen mit</span>
