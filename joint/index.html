@@ -212,7 +212,7 @@ function frameAnchor() {
 }
 // Querhalten: Handy im Querformat mit der Hörmuschel links (bei gespiegeltem Joint: rechts) -> der Joint wandert an die
 // dann obere lange Displaykante und schmiegt sich an sie; zurück Richtung Hochkant wandert die Spitze wieder in die Ecke
-let landK = 0;
+let landK = 0, stubPose = null;
 function updateTilt(dt) {
   if (state !== "lit" || !gScreen || Math.hypot(gScreen[0], gScreen[1]) < 1.5) return;
   const pitch = Math.atan2(gZ || 0, Math.hypot(gScreen[0], gScreen[1]));
@@ -230,6 +230,14 @@ function buildFrame() {
   if (H >= W && landK > 0) {   // quer gehalten: an die lange Kante (im Hochformat-Bild die rechte bzw. linke Seite)
     ax = ax0 + ((orient ? r1 * 1.8 : W - r1 * 1.8) - ax0) * landK;
     th += (-Math.PI / 2 + (orient ? .035 : -.035) - th) * landK;
+  }
+  // Ausdrücken: die Spitze wird auf den Aschenbecherboden gesenkt und bleibt dort (Widerstandspunkt). Der Boden ist die
+  // Waagerechte in Querhaltung – im Hochformat-Bild eine Linie nahe der Kante, zu der die Schwerkraft zeigt.
+  // Wird der Stummel gestaucht, stellt sich der Joint dadurch steiler.
+  if (stubPose && (state === "stub" || state === "out") && stubPose.k > 0) {
+    const fx = orient ? W - stubPose.floor : stubPose.floor, dTip = tiltK * (bx + L / 2 + radius(bx) * .15);
+    const thF = -Math.acos(clamp((fx - ax) / dTip, -.985, .985));
+    th += (thF - th) * stubPose.k;
   }
   // x = -L/2 liegt genau am Ankerpunkt; die Verkürzung (Perspektive) wirkt vom Mund aus nach vorn
   frameM = new DOMMatrix().translate(ax, ay).rotate(th * 180 / Math.PI).scale(tiltK, 1).translate(L / 2, 0);
@@ -505,10 +513,16 @@ function bodyClip(c, R) {
 }
 
 // ---------- Partikel ----------
+// Rauch steigt nach oben: beim Ausdrücken (Handy quer, Aschenbecher unten) gegen die Schwerkraft, sonst zum oberen Bildrand
+function smokeUp() {
+  if (stubPose && (state === "stub" || state === "out")) { const gl = Math.hypot(GX, GY) || 1; return [-GX / gl, -GY / gl]; }
+  return [UX, UY];
+}
 function emitSmoke(x, y, o) {
   if (smoke.length > 1900) return;
   const v = rand(26, 40), sd = rand(-3, 3);
-  smoke.push(Object.assign({ x, y, vx: UX * v - UY * sd, vy: UY * v + UX * sd, s: r1 * rand(.14, .22), gs: r1 * rand(.45, .9), a: rand(.08, .16), life: 0, max: rand(3.5, 6.5), rot: rand(0, 6), vr: rand(-.4, .4), ph: rand(0, 6), sx: 1, v: Math.random() < .25 ? 4 + (Math.random() * 4 | 0) : (Math.random() * 4 | 0) }, o || {}));
+  const [SX, SY] = smokeUp();
+  smoke.push(Object.assign({ x, y, vx: SX * v - SY * sd, vy: SY * v + SX * sd, s: r1 * rand(.14, .22), gs: r1 * rand(.45, .9), a: rand(.08, .16), life: 0, max: rand(3.5, 6.5), rot: rand(0, 6), vr: rand(-.4, .4), ph: rand(0, 6), sx: 1, v: Math.random() < .25 ? 4 + (Math.random() * 4 | 0) : (Math.random() * 4 | 0) }, o || {}));
 }
 // Ausatmen: Rauch kommt aus dem Mund (Filter-Ecke), Menge folgt der Lautstärke der Aufnahme
 let exhaleT = -1, exhaleLvl = 0, analyser, anaBuf, exhaleBuf = null, exhaleRaw = null;
@@ -1093,7 +1107,7 @@ const bendOn = () => state === "stub" || (state === "out" && smears.length > 0);
 // Ausdrücken in 2–3 schnellen Stößen. Jeder Stoß staucht weiter; das Papierrohr knickt an einzelnen Stellen ein,
 // dazwischen bleiben die Stücke gerade (wie echtes gestauchtes Papier), an den Knicken plattet es sich etwas ab.
 let stubKinks = [], pushT = [], pushFired = [], stubC = 0, curveY = null, curveTh = null, curveXs = 0, curveLen = 1;
-const PUSH_DUR = .13;
+const PUSH_DUR = .13, STUB_LOWER = .16;
 let stubWr = [], stubTear = null;
 function makeKinks() {
   const xs = x0 + filterLen, ratio = clamp((bx - xs) / (fullLen - filterLen), 0, 1);
@@ -1109,8 +1123,8 @@ function makeKinks() {
   for (let i = 0; i < 70 + ratio * 70; i++) stubWr.push({ s: 1 - Math.pow(Math.random(), 2.3) * .97, y: rand(-.9, .9), span: rand(.08, .4), slant: rand(-.9, .9), bow: rand(-.35, .35), dark: Math.random() < .62, w: rand(.35, .9), a: rand(.35, 1) });
   // bei längerem Rest reißt das Papier manchmal an einer Stelle längs auf
   stubTear = ratio > .25 && Math.random() < .7 ? { s: rand(.62, .88), y: rand(-.45, .45), len: rand(1.1, 2.2), open: rand(.18, .34), seed: rand(0, 50) } : null;
-  const n = ratio > .45 || Math.random() < .5 ? 3 : 2;
-  pushT = [0]; for (let i = 1; i < n; i++) pushT.push(pushT[i - 1] + rand(.28, .4));
+  // immer zwei Stöße – nachdem die Spitze auf den Aschenbecherboden abgesenkt wurde
+  pushT = [STUB_LOWER, STUB_LOWER + rand(.33, .4)];
   pushFired = pushT.map(() => false);
 }
 // Stauchung 0…1 über die Zeit: jeder Stoß drückt schnell weiter, danach federt es kurz ein Stück zurück
@@ -1423,6 +1437,7 @@ function update(dt, t) {
   }
   if (state === "stub") {
     stubT += dt;
+    if (stubPose) { stubPose.k = easeIO(clamp(stubT / STUB_LOWER, 0, 1)); buildFrame(); }
     const R = radius(bx);
     for (let j = 0; j < pushT.length; j++) if (!pushFired[j] && stubT >= pushT[j]) { pushFired[j] = true; pushFx(j); }
     stubC = stubCompress(stubT);
@@ -1478,15 +1493,16 @@ function update(dt, t) {
     for (let i = 0; i < n; i++) emitSmoke(bx + R * rand(.15, .45), -R * rand(.5, .8));
     if (dr && Math.random() < dt * 9) sparks.push({ x: bx + R * .2, y: rand(-R, R) * .8, vx: rand(10, 70), vy: rand(-60, 10), r: rand(.6, 1.6), life: 0, max: rand(.3, .8) });
   }
+  const [SX, SY] = smokeUp();
   for (const p of smoke) {
     p.life += dt;
     const k = p.life / p.max;
     const drag = p.drag || 0;
-    const h = p.x * UX + p.y * UY, sw = Math.sin(h * .018 + t * .9 + p.ph) * 18 * dt * (1 + k * 3), wob = Math.sin(t * 1.3 + p.ph) * k * 9 * dt;
+    const h = p.x * SX + p.y * SY, sw = Math.sin(h * .018 + t * .9 + p.ph) * 18 * dt * (1 + k * 3), wob = Math.sin(t * 1.3 + p.ph) * k * 9 * dt;
     p.vx *= 1 - drag * dt; p.vy *= 1 - drag * dt;
-    p.vx += -UY * sw + (UX * 12 - p.vx * .15) * dt;
-    p.vy += UX * sw + (UY * 12 - p.vy * .15) * dt;
-    p.x += p.vx * dt - UY * wob; p.y += p.vy * dt + UX * wob; p.rot += p.vr * dt;
+    p.vx += -SY * sw + (SX * 12 - p.vx * .15) * dt;
+    p.vy += SX * sw + (SY * 12 - p.vy * .15) * dt;
+    p.x += p.vx * dt - SY * wob; p.y += p.vy * dt + SX * wob; p.rot += p.vr * dt;
   }
   smoke = smoke.filter(p => p.life < p.max);
   for (const s of sparks) {
@@ -1604,6 +1620,7 @@ function stubOut() {
   if (state !== "lit") return;
   if (trip.on && trip.clip && trip.clip.locked) return;   // das zweite Video wird nicht unterbrochen
   state = "stub"; stubT = 0; stubFrom = bx; stubSide = Math.random() < .5 ? -1 : 1; stubDone = false; stubC = 0;
+  stubPose = { floor: r1 * 2.6, k: 0 };
   makeKinks(); makeCrush();
   if (dive.phase !== "none") { dive.phase = "none"; worldAudio(false); }
   dive.session = false;
@@ -1612,7 +1629,8 @@ function stubOut() {
   const R = radius(bx);
   ashLen0 = Math.max(0, ashStart - bx);
   smears = [];
-  for (let i = 0; i < 70; i++) smears.push({ x: bx + rand(-R * .2, ashLen0 + R * 1.8), y: rand(-1.5, 1.5) * R, rx: R * rand(.1, .7), ry: R * rand(.05, .3), a: rand(.15, .45), rot: rand(-.6, .6) + (Math.random() < .5 ? 0 : 1.2), crumb: Math.random() < .45 });
+  // verschmierte Asche auf dem Aschenbecherboden: entlang des Bodens verteilt (Koordinaten: entlang Boden / senkrecht dazu)
+  for (let i = 0; i < 70; i++) { const u = (Math.random() + Math.random() - 1) * (2.4 + ashLen0 / R * .4); smears.push({ x: u * R, y: R * (.2 + rand(-.25, .2)), rx: R * rand(.12, .7), ry: R * rand(.04, .16), a: rand(.15, .45), rot: rand(-.15, .15), crumb: Math.random() < .45 }); }
 }
 // Ascheballen vorne: krümeliger Haufen aus vielen Brocken dunkler Asche und schwarzer Kohlekristalle,
 // der auf dem gestauchten Ende sitzt (nicht über den Stiel geschmiert), dazu aufgerissene, verkohlte Papierlappen
@@ -1620,17 +1638,16 @@ let crushFlaps = [], crushSeed = [0, 0, 0], crushClumps = [], crushXtal = [];
 function makeCrush() {
   crushCl = []; crushFlaps = []; crushClumps = []; crushXtal = []; crushSeed = [rand(0, 9), rand(0, 9), rand(0, 9)];
   const poly = (n, j) => Array.from({ length: n }, (_, q) => { const a = q / n * 6.283 + rand(-.25, .25); return [Math.cos(a) * rand(1 - j, 1 + j * .3), Math.sin(a) * rand(1 - j, 1 + j * .3)]; });
-  for (let i = 0; i < 46; i++) {
-    const u = Math.pow(Math.random(), .8), v = rand(-1, 1) * (.35 + .65 * Math.sin(Math.PI * (.12 + .88 * u)));   // Haufen: in der Mitte breit, nach außen schmal
+  // u: entlang des Bodens (-1…1, zur Mitte gehäuft), v: Höhe im Haufen (0 = Boden, 1 = Kuppe)
+  const uu = () => (Math.random() + Math.random() + Math.random()) / 1.5 - 1;
+  for (let i = 0; i < 52; i++) {
     const ty = Math.random();
-    crushClumps.push({ u, v, sz: rand(.1, .3) * (1 - u * .35), pts: poly(7 + (Math.random() * 4 | 0), .45), rot: rand(0, 6.283),
+    crushClumps.push({ u: uu(), v: Math.pow(Math.random(), 1.3), sz: rand(.1, .3), pts: poly(7 + (Math.random() * 4 | 0), .45), rot: rand(0, 6.283),
       tone: ty < .55 ? rand(22, 46) : ty < .85 ? rand(46, 72) : rand(80, 112), warm: rand(-4, 6), order: Math.random(), glint: Math.random() < .3 });
   }
-  crushClumps.sort((a, b) => a.v - b.v);   // von hinten (oben) nach vorne (unten)
-  for (let i = 0; i < 230; i++) {   // schwarze, kantige Aschekristalle mit Glanzpunkt
-    const u = Math.random(), v = rand(-1, 1) * (.3 + .7 * Math.sin(Math.PI * (.12 + .88 * u)));
-    crushXtal.push({ u, v, sz: rand(.015, .06), pts: poly(3 + (Math.random() * 3 | 0), .5), rot: rand(0, 6.283), c: rand(4, 26), hi: Math.random() < .45, light: Math.random() < .07 });
-  }
+  crushClumps.sort((a, b) => b.v - a.v);   // erst die oberen (hinteren), dann die am Boden
+  for (let i = 0; i < 230; i++)   // schwarze, kantige Aschekristalle mit Glanzpunkt
+    crushXtal.push({ u: uu() * 1.1, v: Math.random(), sz: rand(.015, .06), pts: poly(3 + (Math.random() * 3 | 0), .5), rot: rand(0, 6.283), c: rand(4, 26), hi: Math.random() < .45, light: Math.random() < .07 });
   for (let i = 0; i < 40; i++) crushCl.push({ a: rand(0, 6.283), r: Math.sqrt(Math.random()), sz: rand(.02, .05), type: "ember", shade: Math.random(), rot: rand(0, 6.283) });
   for (let i = 0; i < 7; i++) crushFlaps.push({ y: rand(-.95, .95), len: rand(.2, .5), w: rand(.12, .26), bend: rand(-.6, .6), teeth: Array.from({ length: 5 }, () => rand(.6, 1)) });
 }
@@ -1641,50 +1658,57 @@ function pushFx(j) {
   for (let i = 0; i < 60; i++) {
     const sz = R * rand(.02, .12), k = 5 + (Math.random() * 3 | 0), pts = [];
     for (let q = 0; q < k; q++) { const a = q / k * 6.283 + rand(-.5, .5); pts.push([Math.cos(a) * sz * rand(.4, 1.2), Math.sin(a) * sz * rand(.3, 1)]); }
-    const side = Math.random() < .5 ? -1 : 1;
-    flakes.push({ x: tip + rand(-R * .3, R * .8), y: side * rand(.6, 1.3) * R, vx: rand(-40, 120), vy: side * rand(40, 220), rot: rand(0, 6), vr: rand(-12, 12),
+    // spritzen auf dem Aschenbecherboden zur Seite und etwas hoch, dann fallen sie (Schwerkraft G)
+    const gl = Math.hypot(GX, GY) || 1, gx = GX / gl, gy = GY / gl, along = rand(-1, 1), up = rand(30, 170), sp2 = along * rand(60, 220);
+    flakes.push({ x: bx + R * .12 - gy * along * R * .8 - gx * R * .1, y: bendY(bx) + gx * along * R * .8 - gy * R * .1, vx: -gy * sp2 - gx * up, vy: gx * sp2 - gy * up, rot: rand(0, 6), vr: rand(-12, 12),
       pts, shade: rand(60, 190) | 0, life: 0, max: rand(.8, 1.8), ph: rand(0, 6), dust: Math.random() < .4 });
   }
   for (let i = 0; i < 14; i++) emitSmoke(tip + R * rand(-.2, .8), rand(-R, R), { s: r1 * rand(.4, .8), gs: r1 * rand(1.2, 2.2), a: rand(.07, .13), v: 4 + (Math.random() * 4 | 0) });
   crunchSound(j);
 }
-// ein dumpfes Knirschen pro Ausdrück-Stoß (jeder Stoß hörbar für sich), ohne helles Zischen
+// Ausdrück-Geräusch, zwei Stöße: 1. Aufsetzen – dumpfer Stoß, die Glut zerbröselt knirschend, kurzes "Pff" der erstickenden
+// Glut; 2. Nachdrücken – tieferes, längeres Mahlen (Asche wird zerrieben, Papier knittert), leiserer Stoß. Alles dumpf.
 function crunchSound(j = 0) {
   if (!ac || !noiseBuf) return;
-  const t = ac.currentTime + .005, n = pushT.length || 3, lv = 1 - j / n * .35, last = j === n - 1;
+  const t = ac.currentTime + .005, second = j > 0;
   const out = ac.createGain(), lp = ac.createBiquadFilter(), lp2 = ac.createBiquadFilter();
-  lp.type = lp2.type = "lowpass"; lp.frequency.value = 2000; lp2.frequency.value = 3000; lp.Q.value = lp2.Q.value = .6;
-  out.gain.value = .9 * lv; out.connect(lp).connect(lp2).connect(master);
-  // Knirschen: eine Handvoll kurzer, gefilterter Knackser (zerbröselnde Glut, knickendes Papier)
-  const k = 7 + (Math.random() * 5 | 0), dur = .12 + (last ? .08 : 0);
-  for (let i = 0; i < k; i++) {
-    const t0 = t + Math.pow(Math.random(), 1.6) * dur, s = ac.createBufferSource(), bp = ac.createBiquadFilter(), g = ac.createGain();
-    s.buffer = noiseBuf; bp.type = "bandpass"; bp.frequency.value = rand(350, 1300); bp.Q.value = rand(.8, 2);
-    const a = rand(.25, .7) * (1 - i / k * .5);
-    g.gain.setValueAtTime(0, t0); g.gain.linearRampToValueAtTime(a, t0 + .002); g.gain.exponentialRampToValueAtTime(.001, t0 + rand(.02, .06));
-    s.connect(bp).connect(g).connect(out); s.start(t0, Math.random() * 1.5); s.stop(t0 + .08);
-  }
-  // gedämpftes Rauschen darunter (Asche wird zusammengeschoben)
+  lp.type = lp2.type = "lowpass"; lp.frequency.value = second ? 1700 : 2100; lp2.frequency.value = 2800; lp.Q.value = lp2.Q.value = .6;
+  out.gain.value = second ? .8 : .85; out.connect(lp).connect(lp2).connect(master);
+  const click = (t0, f, q, a, d) => {
+    const s = ac.createBufferSource(), bp = ac.createBiquadFilter(), g = ac.createGain();
+    s.buffer = noiseBuf; bp.type = "bandpass"; bp.frequency.value = f; bp.Q.value = q;
+    g.gain.setValueAtTime(0, t0); g.gain.linearRampToValueAtTime(a, t0 + .002); g.gain.exponentialRampToValueAtTime(.001, t0 + d);
+    s.connect(bp).connect(g).connect(out); s.start(t0, Math.random() * 1.5); s.stop(t0 + d + .02);
+  };
+  // Knirschen der zerbröselnden Glut / Asche
+  const dur = second ? .3 : .13, n = second ? 22 : 11;
+  for (let i = 0; i < n; i++) { const p = second ? Math.random() : Math.pow(Math.random(), 1.8); click(t + p * dur, rand(300, 1200), rand(.9, 2.4), rand(.2, .6) * (1 - p * .5), rand(.02, .055)); }
+  // Papier knittert (leise, etwas heller, aber unter 3 kHz)
+  for (let i = 0; i < (second ? 9 : 4); i++) click(t + .02 + Math.random() * dur, rand(1300, 2300), rand(2, 4), rand(.06, .14), rand(.015, .03));
+  // gedämpftes Schieben/Mahlen darunter
   const nz = ac.createBufferSource(), nb = ac.createBiquadFilter(), ng = ac.createGain();
-  nz.buffer = noiseBuf; nb.type = "bandpass"; nb.frequency.value = 500; nb.Q.value = .7;
-  ng.gain.setValueAtTime(0, t); ng.gain.linearRampToValueAtTime(.35, t + .015); ng.gain.exponentialRampToValueAtTime(.001, t + .16 + dur);
-  nz.connect(nb).connect(ng).connect(out); nz.start(t, Math.random()); nz.stop(t + .4);
-  // dumpfer Stoß auf die Unterlage
+  nz.buffer = noiseBuf; nb.type = "bandpass"; nb.frequency.value = second ? 380 : 520; nb.Q.value = .7;
+  ng.gain.setValueAtTime(0, t); ng.gain.linearRampToValueAtTime(second ? .3 : .38, t + (second ? .05 : .012)); ng.gain.exponentialRampToValueAtTime(.001, t + dur + .14);
+  nz.connect(nb).connect(ng).connect(out); nz.start(t, Math.random()); nz.stop(t + dur + .2);
+  // dumpfer Stoß auf den Aschenbecherboden: tiefer Ton plus kurzes Klopfen des Bodens
   const o = ac.createOscillator(), og = ac.createGain();
-  o.type = "sine"; o.frequency.setValueAtTime(95 - j * 8, t); o.frequency.exponentialRampToValueAtTime(40, t + .16);
-  og.gain.setValueAtTime(.75 * lv, t); og.gain.exponentialRampToValueAtTime(.001, t + .22); o.connect(og).connect(master); o.start(t); o.stop(t + .25);
-  // nur beim ersten Stoß: leises, dumpfes Verglimmen der erstickenden Glut
-  if (j === 0) {
+  o.type = "sine"; o.frequency.setValueAtTime(second ? 78 : 96, t); o.frequency.exponentialRampToValueAtTime(36, t + .17);
+  og.gain.setValueAtTime(second ? .5 : .7, t); og.gain.exponentialRampToValueAtTime(.001, t + .24); o.connect(og).connect(master); o.start(t); o.stop(t + .26);
+  click(t, second ? 170 : 210, 1.2, second ? .35 : .55, .06);
+  if (!second) {
+    // "Pff": die Glut erstickt, ein kleiner dumpfer Luftstoß, danach leises Verglimmen
     const z = ac.createBufferSource(), zb = ac.createBiquadFilter(), zl = ac.createBiquadFilter(), zg = ac.createGain();
-    z.buffer = noiseBuf; zb.type = "bandpass"; zb.frequency.value = 1600; zb.Q.value = .5; zl.type = "lowpass"; zl.frequency.value = 2600;
-    zg.gain.setValueAtTime(0, t); zg.gain.linearRampToValueAtTime(.05, t + .12); zg.gain.exponentialRampToValueAtTime(.001, t + 1.3);
-    z.connect(zb).connect(zl).connect(zg).connect(master); z.start(t); z.stop(t + 1.4);
+    z.buffer = noiseBuf; zb.type = "bandpass"; zb.frequency.value = 900; zb.Q.value = .6; zl.type = "lowpass"; zl.frequency.value = 1800;
+    zg.gain.setValueAtTime(0, t + .03); zg.gain.linearRampToValueAtTime(.16, t + .06); zg.gain.exponentialRampToValueAtTime(.02, t + .3); zg.gain.exponentialRampToValueAtTime(.001, t + 1.2);
+    z.connect(zb).connect(zl).connect(zg).connect(master); z.start(t); z.stop(t + 1.3);
   }
 }
 const easeOut = x => 1 - Math.pow(1 - clamp(x, 0, 1), 3);
 function drawSmears() {
   if (state !== "stub" && !(state === "out" && smears.length)) return;
-  const k = state === "stub" ? easeOut(stubT / .45) : 1;
+  const k = state === "stub" ? easeOut((stubT - STUB_LOWER) / .45) : 1;
+  if (k <= 0) return;
+  ctx.save(); floorXf();
   for (const m of smears) {
     ctx.save(); ctx.translate(m.x, m.y); ctx.rotate(m.rot); ctx.scale(1, m.ry / m.rx);
     const g = ctx.createRadialGradient(0, 0, 0, 0, 0, m.rx);
@@ -1693,16 +1717,20 @@ function drawSmears() {
     ctx.fillStyle = g; ctx.fillRect(-m.rx, -m.rx, m.rx * 2, m.rx * 2);
     ctx.restore();
   }
+  ctx.restore();
+}
+// Koordinaten des Aschenbecherbodens an der Spitze: x entlang des Bodens, y nach unten (Schwerkraft), 0 = Spitze
+function floorXf() {
+  const gl = Math.hypot(GX, GY) || 1, gx = GX / gl, gy = GY / gl;
+  ctx.transform(-gy, gx, gx, gy, bx + radius(bx) * .12, bendY(bx));
 }
 function drawCrumple(t) {
   if (state !== "stub" && !(state === "out" && smears.length)) return;
   const c = state === "stub" ? stubC : 1;
   if (c <= .01) return;
-  const R = radius(bx), Lf = R * (.55 + .55 * c) + ashLen0 * .1 * c, ry = R * (.85 + .3 * c), x0c = bx - R * .12;
-  const th = bendTh(bx), yb = bendY(bx);
-  ctx.save(); ctx.translate(bx, yb); ctx.rotate(th); ctx.translate(-bx, 0);   // sitzt auf dem (gebogenen) Ende
-  const P = (u, v) => [x0c + u * Lf, v * ry];
-  // aufgerissene, verkohlte Papierlappen an der Bruchkante
+  const R = radius(bx), th = bendTh(bx), yb = bendY(bx);
+  // aufgerissene, verkohlte Papierlappen an der Bruchkante (hängen am Joint-Ende)
+  ctx.save(); ctx.translate(bx, yb); ctx.rotate(th); ctx.translate(-bx, 0);
   ctx.save(); ctx.translate(bx - R * .05, 0);
   for (const f of crushFlaps) {
     const y0 = f.y * R * .95, dirY = Math.sign(f.y) || 1, L2 = R * f.len * c, wd = R * f.w;
@@ -1712,11 +1740,15 @@ function drawCrumple(t) {
     for (let q = 0; q < 5; q++) { const k = (q + 1) / 5; ctx.lineTo(tipX * k + (-R * .05) * (1 - k) + (q % 2 ? 1 : -1) * wd * .15 * f.teeth[q], (y0 - wd / 2) * (1 - k) + tipY * k + wd * (q % 2 ? .3 : -.1)); }
     ctx.lineTo(-R * .05, y0 + wd / 2); ctx.closePath(); ctx.fill();
   }
-  ctx.restore();
+  ctx.restore(); ctx.restore();
+  // Aschehaufen auf dem Aschenbecherboden rund um die aufgesetzte Spitze: breit auseinandergedrückt, flach aufgeschichtet
+  ctx.save(); floorXf();
+  const S = R * (1.25 + .8 * c) + ashLen0 * .14 * c, Hh = R * (.5 + .4 * c), fy = R * .25;   // fy: Bodenlinie
+  const P = (u, v) => [u * S, fy - Math.pow(Math.max(0, 1 - u * u), .6) * Hh * v];
   // Schatten des Haufens auf der Unterlage
-  let g = ctx.createRadialGradient(x0c + Lf * .45, ry * .35, 0, x0c + Lf * .45, ry * .35, Math.max(Lf, ry) * 1.1);
-  g.addColorStop(0, "rgba(0,0,0,.5)"); g.addColorStop(1, "rgba(0,0,0,0)");
-  ctx.fillStyle = g; ctx.fillRect(x0c - R, -ry * 1.6, Lf + R * 2, ry * 3.4);
+  ctx.save(); ctx.translate(0, fy); ctx.scale(1, .28);
+  let g = ctx.createRadialGradient(0, 0, 0, 0, 0, S * 1.3); g.addColorStop(0, "rgba(0,0,0,.55)"); g.addColorStop(1, "rgba(0,0,0,0)");
+  ctx.fillStyle = g; ctx.fillRect(-S * 1.4, -S * 1.4, S * 2.8, S * 2.8); ctx.restore();
   // Brocken: unregelmäßig, jeder mit eigenem Ton, Licht von oben, dunkle Bruchkanten
   for (const k of crushClumps) {
     const grow = clamp((c - k.order * .5) / .5, 0, 1); if (grow <= 0) continue;
@@ -1737,7 +1769,7 @@ function drawCrumple(t) {
   }
   // schwarze Aschekristalle, manche glänzen
   for (const x of crushXtal) {
-    if (x.u > c * 1.15) continue;
+    if (Math.abs(x.u) > c * 1.1) continue;
     const [px, py] = P(x.u, x.v), sz = R * x.sz;
     ctx.save(); ctx.translate(px, py); ctx.rotate(x.rot);
     ctx.beginPath(); x.pts.forEach(([a, b], i) => i ? ctx.lineTo(a * sz, b * sz) : ctx.moveTo(a * sz, b * sz)); ctx.closePath();
@@ -1745,17 +1777,17 @@ function drawCrumple(t) {
     if (x.hi) { ctx.fillStyle = "rgba(235,235,240,.65)"; ctx.fillRect(-sz * .35, -sz * .45, sz * .3, sz * .22); }
     ctx.restore();
   }
-  // lose Krümel rundherum
-  for (let i = 0; i < 46; i++) {
-    const u = hsh(i + crushSeed[1]) * 1.15 - .05, v = (hsh(i * 3 + crushSeed[2]) - .5) * 2.5, [x, y] = P(u, v), sz = R * (.012 + hsh(i + 3) * .03);
-    if (Math.abs(v) < .9 * Math.sin(Math.PI * clamp(.12 + .88 * u, 0, 1)) || u > c * 1.1) continue;
-    ctx.fillStyle = hsh(i + 7) > .8 ? "#7a746c" : hsh(i + 9) > .4 ? "#1a1816" : "#33302c"; ctx.fillRect(x, y, sz, sz * .8);
+  // lose Krümel auf dem Boden links und rechts des Haufens
+  for (let i = 0; i < 50; i++) {
+    const u = (hsh(i + crushSeed[1]) - .5) * 3.4 * c, x = u * S * .9, y = fy - hsh(i * 3 + crushSeed[2]) * R * .12, sz = R * (.012 + hsh(i + 3) * .03);
+    if (Math.abs(u) < .85) continue;
+    ctx.fillStyle = hsh(i + 7) > .8 ? "#7a746c" : hsh(i + 9) > .4 ? "#1a1816" : "#33302c"; ctx.fillRect(x, y - sz * .8, sz, sz * .8);
   }
   // erstickende Glutkrümel
   if (heat > .02) {
     ctx.globalCompositeOperation = "lighter";
     for (const e of crushCl) {
-      const [x, y] = P(.15 + e.r * .7, Math.sin(e.a) * .6), fl = .5 + .5 * Math.sin(t * (5 + e.shade * 9) + e.rot * 3), a = heat * .9 * fl, rr = R * (.03 + e.sz * 2);
+      const [x, y] = P(Math.cos(e.a) * e.r * .55, .3 + .6 * e.r), fl = .5 + .5 * Math.sin(t * (5 + e.shade * 9) + e.rot * 3), a = heat * .9 * fl, rr = R * (.03 + e.sz * 2);
       g = ctx.createRadialGradient(x, y, 0, x, y, rr); g.addColorStop(0, `rgba(255,210,120,${a})`); g.addColorStop(.4, `rgba(255,110,30,${a * .6})`); g.addColorStop(1, "rgba(200,30,0,0)");
       ctx.fillStyle = g; ctx.fillRect(x - rr, y - rr, rr * 2, rr * 2);
     }
@@ -2790,7 +2822,7 @@ document.getElementById("light").onclick = async () => {
 document.getElementById("again").onclick = () => {
   document.getElementById("end").classList.add("gone");
   dive.session = false; world = null;
-  bx = burnStart; ashStart = bx; heat = 0; totalDrags = 0; smoke = []; ashFall = []; flakes = []; smears = []; sparks = [];
+  bx = burnStart; ashStart = bx; heat = 0; totalDrags = 0; smoke = []; ashFall = []; flakes = []; smears = []; sparks = []; stubPose = null;
   stopMic(); removeEventListener("devicemotion", onMotion); mode = "finger"; knock = false;
   musicStop();
   state = "unlit";
