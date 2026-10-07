@@ -71,11 +71,11 @@ html, body { margin: 0; }
 /* Hauptmenü "Glut-Plakat": glühender Comic-Titel, schief verteilte Aktionskarten, Trip-Tipp als gestrichelte Box */
 .overlay.va { gap: 12px; background: radial-gradient(ellipse 90% 45% at 50% 108%, rgba(255,100,25,.38), rgba(255,100,25,0) 70%), radial-gradient(ellipse at center, rgba(11,10,9,.55), rgba(11,10,9,.92)); }
 /* Titel flackert wie eine Flamme: die Hülle bewegt sich (von unten her, unregelmäßig), der Text selbst glüht und schimmert */
-.va-flame { margin: calc(-1 * clamp(10px, 4vh, 40px)) 0 4px; transform: rotate(-3deg); transform-origin: 50% 90%; animation: vaFlick 1.9s ease-in-out infinite; will-change: transform; }
+.va-flame { margin: calc(-1 * clamp(10px, 4vh, 40px)) 0 4px; transform: rotate(-3deg); transform-origin: 50% 90%; animation: vaFlick 3.4s ease-in-out infinite; will-change: transform; }
 .va-title { margin: 0; padding: .1em .16em .04em; display: flex; flex-direction: column; align-items: center; font: 400 clamp(54px, 17vw, 104px)/.86 Bangers, Impact, sans-serif !important; letter-spacing: .03em;
   background: linear-gradient(180deg, #fff6d0 0%, #ffd27a 22%, #ff8a2a 45%, #e2400f 68%, #8a1d06 88%, #e2400f 100%); background-size: 100% 160%; background-position: 50% 0%;
   -webkit-background-clip: text; background-clip: text; color: transparent; -webkit-text-fill-color: transparent;
-  filter: drop-shadow(0 0 18px rgba(255,120,30,.55)) drop-shadow(0 4px 0 #2a0c05); animation: vaGlow 1.3s linear infinite, vaShim 2.3s ease-in-out infinite alternate; }
+  filter: drop-shadow(0 0 18px rgba(255,120,30,.55)) drop-shadow(0 4px 0 #2a0c05); animation: vaGlow 2.6s ease-in-out infinite, vaShim 3.8s ease-in-out infinite alternate; }
 .va-title span { padding-right: .06em; }   /* Bangers ist kursiv: Platz für die Oberkante des letzten Buchstabens */
 .va-title span:last-child { font-size: 1.32em; }
 @keyframes vaFlick {
@@ -102,7 +102,7 @@ html, body { margin: 0; }
 }
 @keyframes vaShim { to { background-position: 50% 70%; } }   /* Farben züngeln im Text auf und ab */
 /* zweite, gegenläufige Zuckung mit anderer Dauer: zusammen mit vaFlick nie gleich (unregelmäßiger) */
-.va-flame2 { transform-origin: 50% 95%; animation: vaJit 1.13s steps(1, end) infinite, vaSway 2.9s ease-in-out infinite; }
+.va-flame2 { transform-origin: 50% 95%; animation: vaJit 2.3s ease-in-out infinite, vaSway 4.7s ease-in-out infinite; }
 @keyframes vaJit {
   0% { translate: 0 0; scale: 1 1; } 11% { translate: .5px -1.5px; scale: 1.01 1.035; } 19% { translate: -.5px 0; scale: .995 .99; }
   33% { translate: 0 -2.5px; scale: 1.015 1.05; } 41% { translate: .5px -.5px; scale: 1 1.01; } 52% { translate: -1px -3px; scale: 1.02 1.06; }
@@ -133,7 +133,7 @@ html, body { margin: 0; }
 .overlay.va .soundon { margin-top: 44px; }
 .va-go { font-size: 19px !important; padding: 16px 44px !important; background: linear-gradient(180deg, #ffb24a, #ff6a1a) !important; box-shadow: 0 0 0 4px rgba(255,138,42,.18), 0 0 50px rgba(255,120,30,.6) !important; animation: vaPulse 1.6s ease-in-out infinite; }
 @keyframes vaPulse { 50% { box-shadow: 0 0 0 9px rgba(255,138,42,.08), 0 0 70px rgba(255,120,30,.85); } }
-@media (prefers-reduced-motion: reduce) { .va-flame, .va-flame2, .va-go, .va-steps li, .overlay p.fine.shine { animation: none; } .va-title { animation: vaGlow 1.3s linear infinite; } }   /* ohne Bewegung flackert nur das Glühen */
+@media (prefers-reduced-motion: reduce) { .va-flame, .va-flame2, .va-go, .va-steps li, .overlay p.fine.shine { animation: none; } .va-title { animation: vaGlow 2.6s ease-in-out infinite; } }   /* ohne Bewegung flackert nur das Glühen */
 .overlay p.fine { font-size: 11.5px; max-width: 42ch; opacity: .8; line-height: 1.35; }
 .overlay p { margin: 0; color: var(--muted); max-width: 40ch; line-height: 1.45; font-size: 15px; }
 .go { font: 600 17px var(--body); color: #1a0d04; background: var(--ember); border: 0; border-radius: 999px; padding: 14px 30px; cursor: pointer; box-shadow: 0 0 40px rgba(255,138,42,.45); }
