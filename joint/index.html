@@ -2276,8 +2276,8 @@ let prefMode = "breath", prefKnock = true;   // feste Vorgaben (kein Einstellung
 let micSens = +store.get("micSens", 40);      // wird beim Anzünden für die Runde festgelegt
 $("micSens").value = micSens;
 $("micSens").oninput = () => store.set("micSens", $("micSens").value);
-$("micHudOn").checked = store.get("micHud", "0") === "1";
-$("micHudOn").onchange = () => store.set("micHud", $("micHudOn").checked ? "1" : "0");
+// Mikro-Analyse nur noch zur Fehlersuche über ?debug; eine alte, gespeicherte Einstellung wird gelöscht
+try { localStorage.removeItem("joint.micHud"); } catch (e) {}
 $("knockSens").value = store.get("knockSens", 55);
 $("knockSens").oninput = () => store.set("knockSens", $("knockSens").value);
 const status = t => { $("status").textContent = t || ""; };
@@ -2305,7 +2305,7 @@ async function startMic() {
   try { await ac.resume(); } catch (e) {}
   connectMic();
   micDeadT = 0; micAlive = false; micFixes = 0; micNeedTap = false; noDrawT = 0; sensUp = 0;
-  micHud = $("micHudOn").checked || /[?&]mic\b/.test(location.search); $("micHud").hidden = !micHud;
+  micHud = /[?&]debug\b/.test(location.search); $("micHud").hidden = !micHud;
   return true;
 }
 function getMicStream() {
