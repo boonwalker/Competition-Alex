@@ -1748,8 +1748,8 @@ function diveUpdate(dt) {
 
 // ---------- Ausflüge aus der Glut: Videos nach abgebranntem Anteil (beim nächsten Zug ohne gedrückt gehaltenen Bildschirm) ----------
 // Gedrückt halten führt dagegen immer in die Glutwelt.
-//  ab 1/3 abgebrannt: Strand-Video des Spielers, quer und bildfüllend, mit wolkigen Traumrändern, höchstens 3 s
-//  ab 3/5 abgebrannt: Animations-Video (die letzten 7 s), quer (auf dem Hochkant-Bildschirm gedreht), läuft ganz durch
+//  ab 1/4 abgebrannt: Strand-Video des Spielers, quer und bildfüllend, mit wolkigen Traumrändern, höchstens 3 s
+//  ab 2/5 abgebrannt: Animations-Video (die letzten 7 s), quer (auf dem Hochkant-Bildschirm gedreht), läuft ganz durch
 // Nach der Rückkehr (Video oder Glutwelt) glimmt der Joint noch kurz kräftig weiter und die Musik läuft aus –
 // dann wird beides sicher gestoppt (sonst hält die Musik im Mikro das Abbrennen am Laufen)
 const AFTER_MS = 1000;   // spätestens nach 1 s: Abbrennen und Musik werden gestoppt
@@ -1759,9 +1759,9 @@ const afterglow = () => {
   return Math.max(a, d);
 };
 const TRIPS = [
-  { frac: 1 / 3, audio: "strand.mp3", orient: "landscape", maxMs: 3000, gain: .55, dream: true },
+  { frac: 1 / 4, audio: "strand.mp3", orient: "landscape", maxMs: 3000, gain: .55, dream: true },
   // läuft immer ganz durch (Antippen, Bewegung usw. beenden es nicht), nur mit eigenem Ton – ohne Hintergrundmusik
-  { frac: 3 / 5, audio: "trip2.mp3", orient: "landscape", maxMs: 8500, gain: .7, locked: true, noMusic: true },
+  { frac: 2 / 5, audio: "trip2.mp3", orient: "landscape", maxMs: 8500, gain: .7, locked: true, noMusic: true },
 ];
 const trip = { phase: "none", t: 0, on: false, clip: null, src: null, gain: null, run: 0, timer: 0, still: false };
 let drawCount = 0, fingerCounted = false, zugCounted = false, zugByThis = false, lastDrawEnd = -1e9;
