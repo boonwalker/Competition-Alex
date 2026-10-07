@@ -2041,6 +2041,8 @@ function diveUpdate(dt) {
   else if (dive.phase === "out" && dive.t >= dOut()) {
     dive.phase = "none"; state = "lit"; dive.jointSince = performance.now();
     if (dive.calm) { dive.jointSince -= AFTER_MS + 1; heat = 0; drawing = false; }
+    // nach dem automatischen Ausflug keine Schnellrückkehr per bloßem Antippen: wieder ziehen + gedrückt halten wie vorher
+    if (dive.auto) { dive.session = false; dive.auto = false; }
     if (mode === "breath") { drawing = false; breathState = "idle"; }
     else if (pid === null) drawing = false;
   }
