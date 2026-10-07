@@ -69,7 +69,7 @@ html, body { margin: 0; }
 .stickers li:nth-child(2) { background: #9fd8ff; --r: 3deg; }
 .stickers li:nth-child(3) { background: #c9c3b6; --r: -2deg; }
 .stickers li:nth-child(4) { background: #ffd23a; --r: 4deg; }
-.overlay p.ride { color: var(--ink); font-size: 15px; max-width: 34ch; text-shadow: 0 1px 10px rgba(0,0,0,.9); }
+.overlay p.ride { color: var(--ink); font-size: 15px; max-width: 34ch; text-shadow: 0 1px 10px rgba(0,0,0,.9); margin-block: clamp(10px, 3.2vh, 30px); }   /* schiebt Titel bis Sticker etwas hoch, "Ton an" und darunter etwas runter */
 .overlay p.ride strong { color: var(--ember); font-weight: 600; }
 .overlay p.fine { font-size: 11.5px; max-width: 42ch; opacity: .8; line-height: 1.35; }
 .overlay p { margin: 0; color: var(--muted); max-width: 40ch; line-height: 1.45; font-size: 15px; }
@@ -97,7 +97,7 @@ button:focus-visible { outline: 2px solid var(--ember); outline-offset: 3px; }
     <li>Asch’ ab!</li>
     <li>Drück ihn aus!</li>
   </ul>
-  <p class="ride">Und wenn du bereit für den Trip bist:<br><strong>Halte den Bildschirm gedrückt, während du am Joint ziehst!!</strong></p>
+  <p class="ride">Und wenn du Bock auf nen Trip hast:<br><strong>Halte den Bildschirm gedrückt, während du am Joint ziehst!!</strong></p>
   <p class="soundon">🔊 Ton an!</p>
   <button class="go" id="light">🔥 Anzünden</button>
   <p class="status" id="status"></p>
@@ -770,7 +770,9 @@ function customStart() {
     cFilter3 = ac.createBiquadFilter(); cFilter3.type = "lowpass"; cFilter3.Q.value = .7;
     cFilter4 = ac.createBiquadFilter(); cFilter4.type = "lowpass"; cFilter4.Q.value = .7;
     cOut = ac.createGain();
-    cIn.connect(comp).connect(makeup).connect(clip).connect(cFilter).connect(cFilter2).connect(cFilter3).connect(cFilter4).connect(cOut).connect(master);
+    cPan = ac.createStereoPanner ? ac.createStereoPanner() : null;
+    cIn.connect(comp).connect(makeup).connect(clip).connect(cFilter).connect(cFilter2).connect(cFilter3).connect(cFilter4).connect(cOut);
+    if (cPan) cOut.connect(cPan).connect(master); else cOut.connect(master);
     cTone = "";
     musicTone(true);
   }
@@ -780,8 +782,11 @@ function customStart() {
   playSnippet(now, true);
 }
 // Klangfarbe der Musik: normal laut und hell; mit Mikro leiser und dumpf; in der Glutwelt gedämpft im Hintergrund
-let cIn = null, cFilter2 = null, cFilter3 = null, cFilter4 = null, cOut = null, cTone = "";
-let cToneGain = 1;
+let cPan = null, cIn = null, cFilter2 = null, cFilter3 = null, cFilter4 = null, cOut = null, cTone = "";
+let cToneGain = 1, fbAtten = 0;
+// Hat dieses Handy einmal eine Musik-Rückkopplung gezeigt, wird die Musik beim Ziehen etwas leiser (je 4 dB, höchstens 12 dB);
+// das erholt sich langsam wieder. Handys ohne Rückkopplung behalten die volle Lautstärke.
+function feedbackSeen() { fbAtten = Math.min(12, fbAtten + 4); cTone = ""; }
 // Musik für einen Augenblick aus- und wieder einblenden (Hörlücke zur Rückkopplungs-Prüfung)
 function musicDuck(on) {
   if (!cOut || cAc !== ac) return;
@@ -794,10 +799,13 @@ function musicTone(now) {
   if (tone === cTone) return;
   cTone = tone;
   const [f, g] = { full: [20000, 1], quiet: [1800, 1], world: [1100, .7], video: [1800, .7] }[tone], t = ac.currentTime, tc = now === true ? .001 : .25;
-  cToneGain = g;
+  // beim Ziehen (Mikro an): nur über den Lautsprecher fern vom Mikro, dafür etwas lauter
+  const away = tone === "quiet" && quietPan !== 0 && cPan;
+  cToneGain = tone === "quiet" ? g * Math.pow(10, -fbAtten / 20) * (away ? 1.5 : 1) : g;
+  if (cPan) { cPan.pan.cancelScheduledValues(t); cPan.pan.setTargetAtTime(away ? quietPan : 0, t, tc); }
   // mit Mikro steil (48 dB/Oktave) über ~2 kHz abschneiden: klingt voll, aber oberhalb von 3 kHz, wo das Mikro auf Atem hört, ist Ruhe
   for (const n of [cFilter, cFilter2, cFilter3, cFilter4]) { n.frequency.cancelScheduledValues(t); n.frequency.setTargetAtTime(f, t, tc); }
-  cOut.gain.cancelScheduledValues(t); cOut.gain.setTargetAtTime(g, t, tc);
+  cOut.gain.cancelScheduledValues(t); cOut.gain.setTargetAtTime(cToneGain, t, tc);
 }
 // Setzt die Musik kurz nach dem Verstummen wieder ein (neuer Zug, kurzer Aussetzer), läuft sie an derselben Stelle weiter
 // statt mit einem neuen Schnipsel – sonst klingt es zerhackt
@@ -1244,21 +1252,24 @@ function update(dt, t) {
   diveUpdate(dt);
   if (state === "lit") {
     // während ein Video läuft (und beim Rückflug), hört das Mikro Video und Musik: Ziehen ruht so lange
-    const tripHold = (trip.on && trip.phase !== "in") || afterglow() > .4;   // auch im ersten Teil des Nachglühens (Musik läuft noch)
+    const tripHold = (trip.on && trip.phase !== "in") || afterglow() > 0;   // auch während des Nachglühens (Musik läuft noch)
     if (tripHold) { if (breathState !== "idle" || drawing) { drawing = false; breathState = "idle"; micLastOn = 0; } musicOffAt = performance.now(); }
     else if (mode === "breath") breathStep(dt);
     const fb = fingerBurning(), dr = drawing || fb;
     const ag = afterglow();
     const back = trip.on && trip.phase === "out";   // Rückflug aus dem Video: Glut glüht kräftig, als würde noch gezogen
-    const hTarget = (dive.session || back) && !dr ? .85 : fb ? 1.1 : !drawing ? .8 * ag : mode === "breath" ? .6 + micInt * .5 : .75;
+    const hTarget = back && !dr ? .85 : fb ? 1.1 : !drawing ? .85 * ag : mode === "breath" ? .6 + micInt * .5 : .75;
     heat += (hTarget - heat) * dt * (dr ? 3 : 1.3);
     const span = burnStart - burnEnd, bxPrev = bx;
     bx -= span * dt * 0.0018;                       // glimmt von selbst ganz langsam
     if (pid !== null && fingerX < bx) {                                                        // brennt bis zum Finger (geht immer, auch im Atem-Modus)
-      if (bx - fingerX > .5) { lastBurnT = performance.now(); if (!fingerCounted) { fingerCounted = true; drawCount++; } }
+      if (bx - fingerX > .5) lastBurnT = performance.now();
+      if (!fingerCounted && fingerFrom - bx > r1 * .3) { fingerCounted = true; drawCount++; }
       bx += (fingerX - bx) * Math.min(1, dt * 7);
     }
     if (drawing && mode === "breath") bx -= span * dt * .035 * micInt;                          // brennt, solange Luft gezogen wird
+    // ein Zug zählt erst, wenn er wirklich einer ist: mindestens ~0,45 s und spürbar abgebrannt
+    if (mode === "breath" && breathState === "draw" && !zugCounted && zugSigT > .4 && drawFrom - bx > r1 * .1) { zugCounted = true; zugByThis = true; drawCount++; }
     else if (ag > 0 && !dr) bx -= span * dt * .012 * ag;                                          // Nachglühen nach einem Video
     if (dr) { drawTime += dt; haze = Math.min(1.2, haze + dt * .035); }
     // beim Ziehen sackt die Asche etwas zusammen: der Aschekegel wächst langsamer, als der Joint abbrennt
@@ -1292,8 +1303,8 @@ function update(dt, t) {
   tripCheck(dt);
   const tripMute = trip.on && trip.clip && trip.clip.noMusic && trip.phase === "video";   // beim zweiten Video nur dessen Ton; beim Rückflug setzt die Musik wieder ein
   const ag2 = state === "lit" ? afterglow() : 0;
-  if (mGate && ag2 > 0 && ag2 < .3 && !drawingNow() && !trip.on) stopFade = .7;   // Musik am Ende des Nachglühens sanft ausblenden
-  musicGate(musicOn && !tripMute && (state === "dive" || (state === "lit" && (dive.session || trip.on || ag2 > .3 || drawingNow()))));
+  if (mGate && ag2 < .4 && !trip.on && !(state === "lit" && drawingNow())) stopFade = .35;   // am Ende des Nachglühens kurz ausblenden
+  musicGate(musicOn && !tripMute && (state === "dive" || (state === "lit" && (trip.on || ag2 > .05 || drawingNow()))));
   stopFade = .09;
   musicTone();
 
@@ -1649,17 +1660,24 @@ function diveUpdate(dt) {
 // ---------- Ausflüge aus der Glut: Videos bei bestimmten Zügen (ohne gedrückt gehaltenen Bildschirm) ----------
 // Jeder neu begonnene Zug zählt (Mikro oder Finger), egal wie viel er abbrennt.
 //  4. Zug: Strand-Video des Spielers, quer und bildfüllend, mit wolkigen Traumrändern, höchstens 3 s
-//  7. Zug: Animations-Video, quer (auf dem Hochkant-Bildschirm gedreht), läuft ganz durch
-// Nach der Rückkehr glimmt der Joint noch kurz kräftig weiter und die Musik läuft aus – kein harter Schnitt
-const AFTER_MS = 2400;
-const afterglow = () => clamp(((trip.afterUntil || 0) - performance.now()) / AFTER_MS, 0, 1);
+//  7. Zug: Animations-Video (die letzten 7 s), quer (auf dem Hochkant-Bildschirm gedreht), läuft ganz durch
+// Nach der Rückkehr (Video oder Glutwelt) glimmt der Joint noch kurz kräftig weiter und die Musik läuft aus –
+// dann wird beides sicher gestoppt (sonst hält die Musik im Mikro das Abbrennen am Laufen)
+const AFTER_MS = 1000;   // spätestens nach 1 s: Abbrennen und Musik werden gestoppt
+const afterglow = () => {
+  const now = performance.now(), a = clamp(((trip.afterUntil || 0) - now) / AFTER_MS, 0, 1);
+  const d = dive.session && dive.phase === "none" ? clamp(1 - (now - dive.jointSince) / AFTER_MS, 0, 1) : 0;   // zurück aus der Glutwelt
+  return Math.max(a, d);
+};
 const TRIPS = [
   { at: 4, audio: "strand.mp3", orient: "landscape", maxMs: 3000, gain: .55, dream: true },
   // läuft immer ganz durch (Antippen, Bewegung usw. beenden es nicht), nur mit eigenem Ton – ohne Hintergrundmusik
-  { at: 7, audio: "trip2.mp3", orient: "landscape", maxMs: 16000, gain: .7, locked: true, noMusic: true },
+  { at: 7, audio: "trip2.mp3", orient: "landscape", maxMs: 8500, gain: .7, locked: true, noMusic: true },
 ];
 const trip = { phase: "none", t: 0, on: false, clip: null, src: null, gain: null, run: 0, timer: 0, still: false };
-let drawCount = 0, fingerCounted = false;
+let drawCount = 0, fingerCounted = false, zugCounted = false, zugByThis = false, lastDrawEnd = -1e9;
+// neuer Zug beginnt; setzt man nach einer ganz kurzen Pause wieder an, ist es derselbe Zug
+function zugStart(now) { if (now - lastDrawEnd < 900) { zugByThis = false; return; } zugCounted = false; zugByThis = false; zugSigT = 0; }
 const tripEl = document.getElementById("trip");
 TRIPS.forEach((c, i) => {
   c.vid = document.getElementById("tripVid" + i); c.played = false; c.buf = null; c.raw = null;
@@ -2540,7 +2558,7 @@ document.addEventListener("pointerdown", () => { if (micNeedTap && micStream) fi
 // Der Mithör-Analysator am Ausgang zeigt, was gespielt wird; wie viel davon beim Mikro ankommt, wird je Frequenzband
 // gelernt (beim Anzünden mit dem Feuerzeug-Zischen eingemessen, danach laufend nachgeführt).
 const MB = [40, 120, 250, 400, 700, 1100, 1500, 2200, 3200, 4500, 6500, 9000];
-let cplDb = null, refHist = [], calibUntil = 0, calibR = [], micRaw = null;
+let cplDb = null, refHist = [], calibUntil = 0, calibR = [], micRaw = null, chanTest = null, chanDiff = 0, quietPan = 0;
 function readMic(dt, learnUp) {
   micAna.getFloatFrequencyData(micBins);
   let pk = -200;
@@ -2568,6 +2586,14 @@ function readMic(dt, learnUp) {
       for (let d = 1; d < cplDb.length; d++) { if (got[b + d]) { cplDb[b] = cplDb[b + d]; break; } if (got[b - d]) { cplDb[b] = cplDb[b - d]; break; } }
     }
     calibR = [];
+    if (chanTest) {
+      const med = a => { a = a.slice().sort((x, y) => x - y); return a[a.length >> 1]; };
+      let sum = 0, n = 0;
+      for (let b = 4; b < MB.length - 1; b++) if ((chanTest.l[b] || []).length >= 3 && (chanTest.r[b] || []).length >= 3) { sum += med(chanTest.l[b]) - med(chanTest.r[b]); n++; }
+      chanDiff = n >= 2 ? sum / n : 0;
+      quietPan = chanDiff > 4 ? 1 : chanDiff < -4 ? -1 : 0;   // Musik auf den Kanal, der beim Mikro leiser ankommt
+      chanTest = null; cTone = "";
+    }
   }
   // Bandpegel des Ausgangs der letzten 0,35 s: deckt die unbekannte Laufzeit Lautsprecher -> Mikro ab
   const nb = MB.length - 1, qNow = new Float32Array(nb);
@@ -2594,7 +2620,13 @@ function readMic(dt, learnUp) {
       else if (rLow > cplDb[b] && learnUp && !calib) cplDb[b] += (rLow - cplDb[b]) * Math.min(1, dt * (quietUser ? .25 : .03));
       // Einmessen: gleichmäßige Stellen der Zippo-Geräusche sammeln, am Ende den unteren Mittelwert nehmen
       // (ein Atemzug oder Wort zwischendurch verschiebt ihn kaum)
-      if (calib && rHigh - rLow < 6) (calibR[b] = calibR[b] || []).push((rLow + rHigh) / 2);
+      if (calib && rHigh - rLow < 6) {
+        (calibR[b] = calibR[b] || []).push((rLow + rHigh) / 2);
+        if (chanTest && b >= 4) {   // ab 700 Hz unterscheiden sich die Lautsprecher deutlich
+          if (now > chanTest.L[0] && now < chanTest.L[1]) (chanTest.l[b] = chanTest.l[b] || []).push((rLow + rHigh) / 2);
+          if (now > chanTest.R[0] && now < chanTest.R[1]) (chanTest.r[b] = chanTest.r[b] || []).push((rLow + rHigh) / 2);
+        }
+      }
       cplDb[b] = clamp(cplDb[b], -60, 6);
     }
     const echo = qMax * Math.pow(10, (cplDb[b] + 6) / 10);   // erwarteter Lautsprecher-Anteil plus 6 dB Sicherheit
@@ -2644,13 +2676,21 @@ function lighterRec() {
     const s = ac.createBufferSource(), g = ac.createGain(); s.buffer = buf; g.gain.value = gain; s.connect(g).connect(master); s.start(at); return g;
   };
   play(zRec.auf, t0 + Z.open - .04, 1);
-  const g = play(zRec.rad, t0 + Z.strike - .04, 1.5);
+  // Kanaltest: die Flamme faucht kurz nur links, dann nur rechts. Das Mikro misst, welcher Lautsprecher bei ihm
+  // leiser ankommt (iPhone: Hörmuschel oben vs. Lautsprecher unten direkt neben dem Mikro) – dorthin geht später die Musik.
+  const pan = ac.createStereoPanner ? ac.createStereoPanner() : null, out = pan || master;
+  if (pan) { pan.connect(master); pan.pan.setValueAtTime(0, t0); pan.pan.setValueAtTime(-1, t0 + Z.ign + .25); pan.pan.setValueAtTime(1, t0 + Z.ign + .95); pan.pan.setValueAtTime(0, t0 + Z.ign + 1.65); }
+  const s2 = ac.createBufferSource(), g = ac.createGain(); s2.buffer = zRec.rad; g.gain.value = 1.5; s2.connect(g).connect(out); s2.start(t0 + Z.strike - .04);
   // das Fauchen der Flamme klingt aus, wenn die Spitze in Glut übergeht
   g.gain.setValueAtTime(1.5, t0 + Z.off - .1); g.gain.linearRampToValueAtTime(0, t0 + Z.off + .4);
-  // leises Gaszischen darunter: liefert beim Einmessen auch die Höhen (die Aufnahme ist vor allem tief)
-  const hs = zNoise(t0 + Z.ign, Z.off - Z.ign + .3, "highpass", 2200, .5, .045, .1, 5, master);
-  hs.gain.setValueAtTime(.045, t0 + Z.off - .1); hs.gain.linearRampToValueAtTime(0, t0 + Z.off + .2);
-  if (micAna) { calibUntil = performance.now() + (Z.off + .3) * 1000; calibR = []; micTest = { base: micPeak, max: -200, t0: performance.now() }; }
+  // Gaszischen darunter: liefert beim Einmessen auch die Höhen (die Aufnahme ist vor allem tief)
+  const hs = zNoise(t0 + Z.ign, Z.off - Z.ign + .3, "highpass", 2200, .5, .07, .1, 5, out);
+  hs.gain.setValueAtTime(.07, t0 + Z.off - .1); hs.gain.linearRampToValueAtTime(0, t0 + Z.off + .2);
+  if (micAna) {
+    const p0 = performance.now();
+    calibUntil = p0 + (Z.off + .3) * 1000; calibR = []; micTest = { base: micPeak, max: -200, t0: p0 };
+    if (pan) chanTest = { L: [p0 + (Z.ign + .4) * 1000, p0 + (Z.ign + .9) * 1000], R: [p0 + (Z.ign + 1.1) * 1000, p0 + (Z.ign + 1.6) * 1000], l: [], r: [] };
+  }
 }
 function lighterSynth() {
   const t0 = ac.currentTime + .02, bus = ac.createGain(); bus.gain.value = 1; bus.connect(master);
@@ -2700,6 +2740,7 @@ function stopMic() {
 // Beliebig viele Züge hintereinander sind möglich, ausgeatmet wird erst beim Pusten.
 // Spektrale Glätte in Teilbändern (0 = einzelne Töne, ~0,5 = Rauschen); Teilbänder gleichen die Neigung des Spektrums aus
 let hpAna = null, hpBuf = null, hpFloor = 1e-9, hiFloor3 = 1e-9;
+let dropFrames = 0, zugSigT = 0, lastQuietT = 0;
 let gap = null, lastGap = 0, drawLvl = [], rawS = -200, refHiDb = -200, musicOffAt = -1e9, envM = [], envR = [];
 // größte Korrelation zwischen Mikro- und Musik-Hüllkurve über ~0,5 s, bei 0–200 ms Laufzeit
 function musicCorr() {
@@ -2748,6 +2789,7 @@ function breathStep(dt) {
   // (leise Atmer, leise Mikros); löst Dauerlärm Fehlalarm aus, wird es wieder unempfindlicher.
   if (state === "lit" && breathState === "idle" && pid === null) { noDrawT += dt; if (noDrawT > 8) sensUp = Math.min(4, Math.max(sensUp, (noDrawT - 8) * .4)); }
   fbPen = Math.max(0, fbPen - dt * .05);
+  if (fbAtten > 0 && !mGate) { const o = fbAtten; fbAtten = Math.max(0, fbAtten - dt * .05); if ((o | 0) !== (fbAtten | 0)) cTone = ""; }
   const thr = MIC_THR - sensUp + fbPen;
   // Grundrauschen nur nachführen, wenn der Lautsprecher still ist – sonst verfälscht das Herausrechnen der Musik die Messung
   const spkQuiet = !mGate && performance.now() - musicOffAt > 700 && refHist.every(([, q]) => q.reduce((a, v) => a + v, 0) < 1e-9);
@@ -2772,7 +2814,10 @@ function breathStep(dt) {
   if (breathState === "draw" && !gap) { drawLvl.push(hpRel); if (drawLvl.length > 60) drawLvl.shift(); } else if (breathState !== "draw") drawLvl = [];
   const lvlRef = drawLvl.length > 10 ? drawLvl.slice().sort((x, y) => x - y)[Math.floor(drawLvl.length * .6)] : hpRel;
   rawS += (hpRel - rawS) * Math.min(1, dt * 15);
-  const dropped = drawLvl.length > 10 && rawS < lvlRef - 6, bigDrop = drawLvl.length > 10 && rawS < lvlRef - 10;
+  // Pegel deutlich gefallen, aber weiterhin über der Schwelle (beim normalen Aufhören fällt er darunter): Verdacht auf Musik-Echo
+  if (hpRel < hiThr) lastQuietT = now;
+  dropFrames = drawLvl.length > 10 && rawS < lvlRef - 10 && hpRel > hiThr ? dropFrames + 1 : 0;
+  const dropped = drawLvl.length > 10 && rawS < lvlRef - 6, bigDrop = dropFrames >= 6;
   // folgt der Hochton-Pegel dem Lautstärkeverlauf der gespielten Musik, hört das Mikro vermutlich die Musik
   if (mGate && breathState === "draw" && !gap) { envM.push(hpDb); envR.push(refHiDb); if (envM.length > 48) { envM.shift(); envR.shift(); } }
   else if (breathState !== "draw") { envM = []; envR = []; }
@@ -2787,11 +2832,13 @@ function breathStep(dt) {
       musicDuck(false);
       if (gap.n >= 2 && (gap.min < hiThr || gap.pre - gap.min > 14) && breathState === "draw") {
         drawing = false; breathState = "idle"; drawEnded(); fbPen = Math.min(8, fbPen + 2); sig = false; micLastOn = 0;
+        if (zugCounted && zugByThis) { drawCount = Math.max(0, drawCount - 1); zugCounted = false; }   // war Musik-Echo, kein Zug
+        feedbackSeen();
       }
       gap = null; lastGap = now;
     } else if (breathState === "draw") sig = true;   // während der Lücke den Zug nicht abreißen lassen
-  } else if (mGate && breathState === "draw" && cOut && now - evStart > 500 &&
-             ((bigDrop && now - lastGap > 600) || now - Math.max(lastGap, evStart) > 4500)) {
+  } else if (mGate && breathState === "draw" && cOut && now - evStart > 500 && now - lastQuietT > 350 &&
+             ((bigDrop && now - lastGap > 600) || now - Math.max(lastGap, evStart) > 4000)) {
     // Die Musik soll beim Ziehen durchlaufen: nur prüfen, wenn der Pegel deutlich abfällt (typisch fürs Aufhören –
     // die Musik endet dann ohnehin) oder ein Zug mit Musik ungewöhnlich lange dauert
     const lat = ((ac.outputLatency || 0) + (ac.baseLatency || 0)) * 1000;
@@ -2799,6 +2846,7 @@ function breathStep(dt) {
     gap = { t0: now, lat: clamp(lat, 30, 250), n: 0, min: 999, pre: recent.length ? recent[recent.length >> 1] : hpRel }; musicDuck(true);
   }
   if (window.__dbg) window.__dbg.push([now | 0, breathState, micHi | 0, hpRel | 0, hiThr | 0, +(dropped ? 1 : corr).toFixed(2), mGate ? 1 : 0, gap ? 1 : 0, sig ? 1 : 0]);
+  if (breathState === "draw" && sig && !gap) zugSigT += dt;
   const wasSilent = !micPrevSig && now - micLastOn > 120; micPrevSig = sig;
   if (sig) micLastOn = now;
   const silentFor = now - micLastOn;
@@ -2819,15 +2867,15 @@ function breathStep(dt) {
     if (micOnTime > .12 && state === "lit" && now - musicOffAt > 450) {   // kurz nach Musikende hallt sie noch im Mikro nach
       // Ziehen ist der Normalfall. Pusten zählt nur, wenn Rauch in der Lunge ist UND der Klang eindeutig nach Pusten klingt.
       breathState = lungs > .05 && blowScore > .7 ? "blow" : "draw";
-      if (breathState === "draw") { drawing = true; drawTime = 0; drawFrom = bx; lastBxBreath = bx; evStart = now; lungsBefore = lungs; autoPuffAt = 0; drawCount++; noDrawT = 0; }
+      if (breathState === "draw") { drawing = true; drawTime = 0; drawFrom = bx; lastBxBreath = bx; evStart = now; lungsBefore = lungs; autoPuffAt = 0; noDrawT = 0; zugStart(now); }
     }
   } else if (breathState === "draw") {
     lungs += Math.max(0, lastBxBreath - bx) / (L * .08); lastBxBreath = bx; lungsAt = now;
     // kurze Aussetzer im Atem beenden den Zug (und die Musik) nicht
-    if (silentFor > 650) { drawing = false; breathState = "idle"; if (drawFrom - bx > r1 * .15) totalDrags++; drawEnded(); sensUp = Math.max(0, sensUp - 1); }
+    if (silentFor > 650) { drawing = false; breathState = "idle"; lastDrawEnd = now; if (drawFrom - bx > r1 * .15) totalDrags++; drawEnded(); sensUp = Math.max(0, sensUp - 1); }
     else if (now - evStart > (mGate ? 7000 : 6000)) {
       // ein so langer Zug bei laufender Musik ist fast immer Rückkopplung: abbrechen und ab jetzt unempfindlicher
-      if (mGate) fbPen = Math.min(8, fbPen + 3);
+      if (mGate) { fbPen = Math.min(8, fbPen + 3); feedbackSeen(); if (zugCounted && zugByThis) { drawCount = Math.max(0, drawCount - 1); zugCounted = false; } }
       // so lange zieht niemand: das ist Dauerlärm, als neues Grundrauschen übernehmen
       drawing = false; breathState = "idle"; sensUp = Math.max(0, sensUp - 3);
       if (!mGate) { micFloor = hi / 4; loFloor = lo / 4; totFloor = tot / 4; }   // echter Dauerlärm: Grundrauschen knapp darunter neu ansetzen
@@ -2840,14 +2888,14 @@ function breathStep(dt) {
     if (lungs > 0) { exhaleStrength = clamp(.55 + lungs * .5, .55, 1.6); lungs = Math.max(0, lungs - dt * micBlow * .3); }
     else if (exhaleSrc === "mic") exhaleT = -1;
     if (silentFor > 350) { breathState = "idle"; if (exhaleSrc === "mic") exhaleT = -1; }
-    else if (blowScore < .45 && state === "lit") { breathState = "draw"; drawing = true; drawCount++; drawTime = 0; drawFrom = bx; lastBxBreath = bx; evStart = now; lungsBefore = lungs; if (exhaleSrc === "mic") exhaleT = -1; }
+    else if (blowScore < .45 && state === "lit") { breathState = "draw"; drawing = true; zugStart(now); drawTime = 0; drawFrom = bx; lastBxBreath = bx; evStart = now; lungsBefore = lungs; if (exhaleSrc === "mic") exhaleT = -1; }
   }
   micInt += ((breathState === "draw" ? drawRaw : 0) - micInt) * Math.min(1, dt * 10);
   micBlow += ((breathState === "blow" && lungs > 0 ? blowRaw : 0) - micBlow) * Math.min(1, dt * 10);
   if (lungs > 0 && now - lungsAt > 25000) lungs = 0;   // zu lange angehalten: Rauch ist weg
   setCue(micNeedTap ? "Einmal kurz auf den Bildschirm tippen – dann hört das Mikro zu" : audioStuck() ? "Kein Ton? Einmal kurz auf den Bildschirm tippen" : drawCount === 0 && noDrawT > 7 ? "Hörbar am Filter ziehen – das Mikro sitzt unten am Handy" : lungs > .05 && breathState !== "blow" && breathState !== "draw" ? "Reinpusten zum Ausatmen" : "");
   if (micHud) $("micHud").textContent =
-    `${{ idle: "Ruhe", draw: "Ziehen", blow: "Pusten" }[breathState]} · Schwerpunkt ${(centroid / 1000).toFixed(1)} kHz · tief ${micLo | 0} dB / hoch ${micHi | 0} dB · Schwelle ${thr.toFixed(0)} dB · Puste-Wert ${blowScore.toFixed(2)} · Lunge ${lungs.toFixed(1)} · Audio ${ac.state} ${ac.sampleRate} · Spitze ${micPeak | 0} dB · Züge ${drawCount} · Videos ${TRIPS.map(c => c.played ? "✓" : "–").join("")}${trip.on ? (trip.still ? " Standbild" : " läuft") : ""} · Zippo-Test ${micTest ? (micTest.t0 ? "läuft" : micTest.ok ? "gehört" : "nichts gehört") : "–"} · Kopplung ${cplDb ? Array.from(cplDb, v => v | 0).join("/") : "–"}`;
+    `${{ idle: "Ruhe", draw: "Ziehen", blow: "Pusten" }[breathState]} · Schwerpunkt ${(centroid / 1000).toFixed(1)} kHz · tief ${micLo | 0} dB / hoch ${micHi | 0} dB · Schwelle ${thr.toFixed(0)} dB · Puste-Wert ${blowScore.toFixed(2)} · Lunge ${lungs.toFixed(1)} · Audio ${ac.state} ${ac.sampleRate} · Spitze ${micPeak | 0} dB · Züge ${drawCount} · Videos ${TRIPS.map(c => c.played ? "✓" : "–").join("")}${trip.on ? (trip.still ? " Standbild" : " läuft") : ""} · Zippo-Test ${micTest ? (micTest.t0 ? "läuft" : micTest.ok ? "gehört" : "nichts gehört") : "–"} · Kanal ${quietPan ? (quietPan < 0 ? "links" : "rechts") : "beide"} (${chanDiff.toFixed(1)} dB) · Musik −${fbAtten.toFixed(0)} dB · Kopplung ${cplDb ? Array.from(cplDb, v => v | 0).join("/") : "–"}`;
 }
 
 // Klopfen auf den Rahmen = Ruck im Beschleunigungssensor; Empfindlichkeit wird beim Anzünden festgelegt
