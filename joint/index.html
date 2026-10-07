@@ -326,9 +326,17 @@ function stubLevel(g) {
 }
 const stubGrav = () => (stubPose && stubPose.gLock) || stubLevel(gravScreen());
 // dieselbe Richtung im Koordinatensystem des Joints (für fallende Asche, Funken, Aschenbecherboden)
+// Beim Rauchen (nicht beim Ausdrücken) fliegen abgeklopfte Asche und Glut vor allem zur linken langen Seite weg (bei
+// gespiegeltem Joint zur rechten) – auch hochkant; die gemessene Lage zählt nur zu einem Fünftel mit
+function ashGrav() {
+  const g = gravScreen();
+  if (state !== "lit" && state !== "lighting") return g;
+  const a = Math.atan2(g[1], g[0]), b = orient ? 0 : Math.PI, r = a + Math.atan2(Math.sin(b - a), Math.cos(b - a)) * .8;
+  return [Math.cos(r), Math.sin(r)];
+}
 function updateG() {
   if (!frameInv) return;
-  const [gx, gy] = gravScreen(), a = frameInv.transformPoint(new DOMPoint(W / 2, H / 2)), g = frameInv.transformPoint(new DOMPoint(W / 2 + gx, H / 2 + gy));
+  const [gx, gy] = ashGrav(), a = frameInv.transformPoint(new DOMPoint(W / 2, H / 2)), g = frameInv.transformPoint(new DOMPoint(W / 2 + gx, H / 2 + gy));
   GX = g.x - a.x; GY = g.y - a.y;
 }
 
