@@ -1448,7 +1448,7 @@ function render(t) {
 }
 // Noch kein Zug 3 s nach dem Anzünden: "Nimm nen kräftigen Zug!" mit gekrümmtem Pfeil, der sich aufbaut und
 // mehrfach genau auf das Mikrofon am Filterende zeigt; das Ganze pulsiert leicht
-let pullHintT = 0, pullHintA = 0;
+let pullHintT = 0, pullHintA = 0, pullHintDone = false;
 function drawPullHint(t) {
   if (pullHintA < .01) return;
   const a = pullHintA, fs = Math.min(W, H) * .1, f = frameM.transformPoint(new DOMPoint(x0 + r1 * .3, 0));
@@ -1587,7 +1587,9 @@ function update(dt, t) {
   }
   haze = Math.max(0, haze - dt * .008);
   if (state === "lit") { diveCheck(); autoPuff(); updateTilt(dt); }
-  pullHintT = state === "lit" && mode === "breath" && drawCount === 0 && totalDrags === 0 && !drawingNow() && !trip.on ? pullHintT + dt : 0;
+  // sobald einmal ein Zug erkannt wurde (auch ein kurzer, der nicht mitgezählt wird), kommt der Hinweis bei diesem Joint nicht wieder
+  if (drawingNow() || drawCount > 0 || totalDrags > 0) pullHintDone = true;
+  pullHintT = state === "lit" && mode === "breath" && !pullHintDone && !trip.on ? pullHintT + dt : 0;
   pullHintA += ((pullHintT > 3 ? 1 : 0) - pullHintA) * Math.min(1, dt * (pullHintT > 3 ? 4 : 10));
   // Stop-and-go: Musik nur, solange wirklich gezogen wird (Finger in Bewegung bzw. Ziehgeräusch)
   tripCheck(dt);
@@ -2979,7 +2981,7 @@ document.getElementById("light").onclick = async () => {
   mode = useMode; knock = prefKnock && motionOk; status(""); mStep = 0;
   if (note) { setCue(note); setTimeout(() => setCue(""), 5000); }
   document.getElementById("start").classList.add("gone");
-  state = "lighting"; lightT = 0; unexhaled = 0; autoPuffAt = 0; TRIPS.forEach(c => { c.played = false; c.arm = undefined; }); trip.run = 0;
+  state = "lighting"; lightT = 0; unexhaled = 0; pullHintDone = false; autoPuffAt = 0; TRIPS.forEach(c => { c.played = false; c.arm = undefined; }); trip.run = 0;
   decodeTrip(); drawCount = 0;
   lighterSound();
   try { navigator.wakeLock && navigator.wakeLock.request("screen").catch(() => {}); } catch (e) {}
