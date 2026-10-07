@@ -35,6 +35,11 @@ html, body { margin: 0; }
 .settings button { font: 600 13px var(--body); color: var(--ink); background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.14); border-radius: 999px; padding: 8px 14px; cursor: pointer; }
 .seg button[aria-checked="true"] { background: var(--ember); color: #1a0d04; border-color: var(--ember); }
 .settings input[type=range] { width: 100%; accent-color: var(--ember); }
+/* Strand-Video beim dritten Zug: bildschirmfüllend, so gedreht, dass oben = oben beim Halten */
+.trip { position: fixed; inset: 0; z-index: 3; background: #000; overflow: hidden; opacity: 0; transition: opacity .7s ease; }
+.trip.on { opacity: 1; }
+.trip video { position: absolute; left: 50%; top: 50%; object-fit: cover; transform: translate(-50%, -50%) rotate(var(--rot, 0deg)); }
+.trip::after { content: ""; position: absolute; inset: 0; pointer-events: none; box-shadow: inset 0 0 90px 30px rgba(20,8,0,.55); }
 .cue { position: fixed; left: 50%; bottom: calc(env(safe-area-inset-bottom, 0px) + 18px); transform: translateX(-50%); z-index: 2; font: 600 15px var(--body); color: var(--ink); background: rgba(20,18,16,.75); border: 1px solid rgba(255,255,255,.12); border-radius: 999px; padding: 8px 16px; white-space: nowrap; pointer-events: none; }
 .hud { position: fixed; left: 16px; top: calc(env(safe-area-inset-top, 0px) + 10px); z-index: 2; font: 500 12px var(--body); color: var(--muted); background: rgba(20,18,16,.7); border-radius: 8px; padding: 4px 8px; max-width: calc(100% - 32px); pointer-events: none; font-variant-numeric: tabular-nums; }
 .settings label.check { display: flex; align-items: center; gap: 8px; margin-top: 6px; text-transform: none; letter-spacing: 0; font-size: 13px; color: var(--ink); }
@@ -66,6 +71,7 @@ button:focus-visible { outline: 2px solid var(--ember); outline-offset: 3px; }
 <canvas id="c"></canvas>
 
 <div class="cue" id="cue" hidden></div>
+<div class="trip" id="trip" hidden><video id="tripVid" src="strand.mp4" muted playsinline preload="auto" disablepictureinpicture></video></div>
 <div class="hud" id="micHud" hidden></div>
 
 <div class="overlay" id="start">
@@ -166,7 +172,7 @@ function resize() {
   cv.width = W * dpr; cv.height = H * dpr;
   L = Math.hypot(W, H); S = Math.min(W, H);
   r1 = Math.min(S * 0.085, L * 0.042); r0 = r1 * 0.74;
-  x0 = -L / 2 - 6; fullLen = L * 0.9; filterLen = fullLen * 0.16;
+  x0 = -L / 2 - 6; fullLen = L * 0.8; filterLen = L * 0.144;   // etwas kürzer: Spitze bleibt weg von der oberen Ecke
   burnStart = x0 + fullLen; burnEnd = x0 + filterLen + L * 0.025;
   if (state === "unlit") { bx = burnStart; ashStart = bx; }
   bx = clamp(bx ?? burnStart, burnEnd, burnStart); ashStart = Math.max(ashStart ?? bx, bx);
@@ -203,17 +209,7 @@ function buildFrame() {
   UX = b.x - a.x; UY = b.y - a.y;
   const g = frameInv.transformPoint(new DOMPoint(W / 2 + (orient ? 1 : -1), H / 2));
   GX = g.x - a.x; GY = g.y - a.y;
-  if (camK > 0) {
-    // Kamera beim Anzünden: ranzoomen, Spitze samt Zippo in die Bildmitte holen
-    // Bildmitte: zwischen Spitze und Zippo, damit Windschutz, Rad und Flamme zu sehen sind
-    const n = Math.hypot(GX, GY) || 1, z = 1 + (camZoom() - 1) * camK, P = frameM.transformPoint(new DOMPoint(burnStart + GX / n * r1 * 1.5, GY / n * r1 * 1.5));
-    const qx = P.x + (W / 2 - P.x) * camK, qy = P.y + (H / 2 - P.y) * camK;
-    frameM = new DOMMatrix().translate(qx, qy).scale(z).translate(-P.x, -P.y).multiply(frameM);
-    frameInv = frameM.inverse();
-  }
 }
-let camK = 0;
-const camZoom = () => clamp(Math.min(W, H) / (r1 * 6.6), 1.3, 2.1);
 
 // ---------- Papier, Füllung, Crutch (einmal vorgerendert) ----------
 function conePath(c, ox, oy) {
@@ -743,10 +739,10 @@ function customStart() {
 let cIn = null, cFilter2 = null, cOut = null, cTone = "";
 function musicTone(now) {
   if (!cOut || cAc !== ac) return;
-  const tone = state === "dive" ? "world" : musicQuiet() ? "quiet" : "full";
+  const tone = state === "dive" ? "world" : trip.on ? "video" : musicQuiet() ? "quiet" : "full";
   if (tone === cTone) return;
   cTone = tone;
-  const [f, g] = { full: [20000, 1], quiet: [900, .55], world: [520, .3] }[tone], t = ac.currentTime, tc = now === true ? .001 : .25;
+  const [f, g] = { full: [20000, 1], quiet: [900, .55], world: [520, .3], video: [1600, .45] }[tone], t = ac.currentTime, tc = now === true ? .001 : .25;
   for (const n of [cFilter, cFilter2]) { n.frequency.cancelScheduledValues(t); n.frequency.setTargetAtTime(f, t, tc); }
   cOut.gain.cancelScheduledValues(t); cOut.gain.setTargetAtTime(g, t, tc);
 }
@@ -778,18 +774,19 @@ document.getElementById("music").onclick = () => {
 
 // ---------- Zeichnen ----------
 // Anzünden mit dem Zippo: Deckel auf, Reibrad, Flamme, Deckel zu (Zeiten in Sekunden ab dem Tipp)
-const Z = { open: .38, strike: .82, ign: .88, catchT: 1.3, off: 2.3, lit: 2.85 };
+const Z = { open: .15, strike: .58, ign: .64, catchT: .7, off: 1.9, lit: 2.2 };   // Zippo ist nur zu hören, der Joint entflammt einfach
 const zUp = () => { const n = Math.hypot(GX, GY) || 1; return [-GX / n, -GY / n]; };   // Flamme steigt im Lot: weg vom Boden, zum rechten Rand
 const zTip = () => [burnStart + r1 * .35, 0];
-function zippoBase(h) { const [ux, uy] = zUp(), [tx, ty] = zTip(); return [tx - ux * h * .38, ty - uy * h * .38]; }
-// Detailreiche Feuerzeugflamme: blauer Fuß, heller Kern, gelber Leuchtkörper, flackernde Spitze, abreißende Zungen
+function zippoBase(h) { const [ux, uy] = zUp(), [tx, ty] = zTip(); return [tx - ux * h * .06, ty - uy * h * .06]; }   // Flamme sitzt auf der gedrehten Spitze
+// Detailreiche Flamme: blauer Fuß, heller Kern, gelber Leuchtkörper, flackernde Spitze, abreißende Zungen
 function drawFlame(t, a) {
   const e = a - Z.ign;
   if (e < 0 || a > Z.off) return;
-  let size = e < .09 ? e / .09 * 1.3 : 1 + .3 * Math.exp(-(e - .09) * 9);   // "Wumm": kurz größer, dann ruhig
-  size *= clamp((Z.off - a) / .07, 0, 1);                                    // Deckel zu: Flamme erstickt
+  // die gedrehte Papierspitze lodert auf ("Wumm"), brennt herunter und geht in Glut über
+  let size = e < .09 ? e / .09 * 1.25 : .55 + .7 * Math.exp(-(e - .09) * 2.2);
+  size *= clamp((Z.off - a) / .3, 0, 1);
   if (size <= 0) return;
-  const hb = r1 * 4.4, h = hb * size * (1 + .07 * Math.sin(t * 21) + .05 * Math.sin(t * 13.3) + .03 * Math.sin(t * 37)), wMax = r1 * .78 * Math.sqrt(size);
+  const hb = r1 * 3.4, h = hb * size * (1 + .07 * Math.sin(t * 21) + .05 * Math.sin(t * 13.3) + .03 * Math.sin(t * 37)), wMax = r1 * .78 * Math.sqrt(size);
   const [bxF, byF] = zippoBase(hb), [ux, uy] = zUp();
   ctx.save(); ctx.globalCompositeOperation = "lighter";
   ctx.translate(bxF, byF); ctx.rotate(Math.atan2(uy, ux) + Math.PI / 2);   // lokal: -y = oben
@@ -829,77 +826,11 @@ function drawFlame(t, a) {
   }
   ctx.restore();
 }
-// Das Zippo selbst: gebürstetes Chrom, Windschutz mit Löchern, Reibrad, Docht, aufklappender Deckel
-function drawZippo(t, a) {
-  const hb = r1 * 4.4, [bxF, byF] = zippoBase(hb), [ux, uy] = zUp();
-  const ease = x => { x = clamp(x, 0, 1); return 1 - Math.pow(1 - x, 3); };
-  // reinschieben, nach dem Zuklappen wieder weg (Richtung Boden)
-  const slide = (1 - ease(a / .32)) + ease((a - Z.off - .12) / .4);
-  if (slide >= 1) return;
-  const cw = r1 * 2.1, chH = r1 * 1.75, caseW = r1 * 2.5, caseH = r1 * 5.2, wickX = -cw * .14, top = r1 * .18;
-  ctx.save();
-  ctx.translate(bxF - ux * r1 * 9 * slide, byF - uy * r1 * 9 * slide);
-  ctx.rotate(Math.atan2(uy, ux) + Math.PI / 2);   // lokal: -y = oben
-  ctx.translate(-wickX, 0);                      // Ursprung = Docht
-  const flame = a > Z.ign && a < Z.off ? 1 : 0;
-  const chrome = (x0, x1, dark = 0) => {
-    const g = ctx.createLinearGradient(x0, 0, x1, 0);
-    const c = v => `rgb(${(v - dark) | 0},${(v - dark + 3) | 0},${(v - dark + 7) | 0})`;
-    g.addColorStop(0, c(78)); g.addColorStop(.18, c(196)); g.addColorStop(.34, c(232)); g.addColorStop(.5, c(140)); g.addColorStop(.72, c(214)); g.addColorStop(.9, c(118)); g.addColorStop(1, c(64));
-    return g;
-  };
-  const brush = (x0, y0, w, h) => {
-    ctx.save(); ctx.beginPath(); ctx.rect(x0, y0, w, h); ctx.clip(); ctx.lineWidth = .6;
-    for (let i = 0; i < w; i += 1.6) { ctx.strokeStyle = `rgba(${i * 37 % 2 ? 255 : 0},${i * 37 % 2 ? 255 : 0},${i * 37 % 2 ? 255 : 0},${.05 + (i * 13 % 7) / 120})`; ctx.beginPath(); ctx.moveTo(x0 + i, y0); ctx.lineTo(x0 + i, y0 + h); ctx.stroke(); }
-    ctx.restore();
-  };
-  // Gehäuse (Unterteil)
-  const cy0 = top + chH;
-  ctx.fillStyle = chrome(-caseW / 2, caseW / 2, 10);
-  ctx.beginPath(); ctx.roundRect(-caseW / 2, cy0, caseW, caseH, [r1 * .12, r1 * .12, r1 * .45, r1 * .45]); ctx.fill();
-  brush(-caseW / 2, cy0, caseW, caseH);
-  ctx.fillStyle = "rgba(0,0,0,.35)"; ctx.fillRect(-caseW / 2, cy0, caseW, r1 * .12);   // Fuge zum Deckel
-  // Windschutz mit zwei Reihen Löchern
-  ctx.fillStyle = chrome(-cw / 2, cw / 2, 25); ctx.fillRect(-cw / 2, top, cw, chH);
-  brush(-cw / 2, top, cw, chH);
-  for (let row = 0; row < 2; row++) for (let i = 0; i < 4; i++) {
-    const hx = -cw * .36 + i * cw * .24, hy = top + chH * (.32 + row * .3), hr = r1 * .12;
-    const hg = ctx.createRadialGradient(hx, hy, 0, hx, hy, hr);
-    hg.addColorStop(0, flame ? "rgba(255,170,70,.95)" : "#15120f"); hg.addColorStop(.7, flame ? "rgba(160,70,20,.9)" : "#211d19"); hg.addColorStop(1, "#3a3632");
-    ctx.fillStyle = hg; ctx.beginPath(); ctx.arc(hx, hy, hr, 0, 7); ctx.fill();
-  }
-  // Reibrad zwischen den Ohren des Windschutzes, dreht sich beim Ratschen
-  const wr = r1 * .34, wx = cw * .27, wy = top + wr * .35, spin = clamp((a - Z.strike + .1) / .14, 0, 1) * 9;
-  ctx.fillStyle = "#2b2824"; ctx.beginPath(); ctx.arc(wx, wy, wr, 0, 7); ctx.fill();
-  ctx.strokeStyle = "rgba(170,165,155,.8)"; ctx.lineWidth = .9;
-  for (let i = 0; i < 14; i++) { const an = i / 14 * 6.283 + spin; ctx.beginPath(); ctx.moveTo(wx + Math.cos(an) * wr * .55, wy + Math.sin(an) * wr * .55); ctx.lineTo(wx + Math.cos(an) * wr, wy + Math.sin(an) * wr); ctx.stroke(); }
-  ctx.fillStyle = "#8d8a84"; ctx.beginPath(); ctx.arc(wx, wy, wr * .22, 0, 7); ctx.fill();
-  // Docht
-  ctx.strokeStyle = flame ? "#3a1e0e" : "#e8dcc4"; ctx.lineWidth = r1 * .16; ctx.lineCap = "round";
-  ctx.beginPath(); ctx.moveTo(wickX, top + r1 * .1); ctx.lineTo(wickX + r1 * .04, -r1 * .12); ctx.stroke();
-  // Deckel: am Scharnier (Gehäuse-Oberkante, Seite gegenüber dem Rad) aufgeklappt
-  const open = a < Z.off ? ease((a - Z.open) / .07) : 1 - ease((a - Z.off) / .06);
-  const lidH = r1 * 2.25, hx = -caseW / 2, hy = cy0;
-  ctx.save(); ctx.translate(hx, hy); ctx.rotate(-open * 2.85);
-  ctx.fillStyle = chrome(0, caseW, 0); ctx.beginPath(); ctx.roundRect(0, -lidH, caseW, lidH, [r1 * .45, r1 * .45, r1 * .1, r1 * .1]); ctx.fill();
-  brush(0, -lidH, caseW, lidH);
-  ctx.strokeStyle = "rgba(0,0,0,.3)"; ctx.lineWidth = 1; ctx.strokeRect(0, -lidH, caseW, lidH);
-  ctx.restore();
-  // Schein der Flamme auf dem Chrom
-  if (flame) {
-    const g = ctx.createRadialGradient(0, -r1, 0, 0, -r1, caseH * .8);
-    g.addColorStop(0, "rgba(255,150,60,.35)"); g.addColorStop(1, "rgba(255,120,40,0)");
-    ctx.globalCompositeOperation = "lighter"; ctx.fillStyle = g;
-    ctx.fillRect(-cw / 2, top, cw, chH);
-    ctx.beginPath(); ctx.roundRect(-caseW / 2, cy0, caseW, caseH, [r1 * .12, r1 * .12, r1 * .45, r1 * .45]); ctx.fill();
-  }
-  ctx.restore();
-}
 // Funkenregen vom Reibrad
 function zippoSparks() {
-  const [bxF, byF] = zippoBase(r1 * 4.4), [ux, uy] = zUp();
-  for (let i = 0; i < 34; i++) {
-    const sp = rand(220, 760), side = rand(-.45, .45), vx = (ux - uy * side) * sp, vy = (uy + ux * side) * sp;
+  const [bxF, byF] = zippoBase(r1 * 3.4), [ux, uy] = zUp();
+  for (let i = 0; i < 22; i++) {
+    const sp = rand(160, 520), side = rand(-.45, .45), vx = (ux - uy * side) * sp, vy = (uy + ux * side) * sp;
     sparks.push({ x: bxF + rand(-3, 3), y: byF + rand(-3, 3), vx, vy, r: rand(.5, 1.6), life: 0, max: rand(.18, .55), g: 380, dr: rand(1.5, 3.5), fl: rand(8, 20), ph: rand(0, 6) });
   }
 }
@@ -920,14 +851,14 @@ function drawJointPart(t, R, lit) {
   ctx.restore();
 
   // Gedrehtes Ende (unangezündet / beim Anzünden)
-  if (state === "unlit" || (state === "lighting" && lightT < Z.catchT + .35)) {
-    const k = state === "unlit" ? 1 : 1 - clamp((lightT - Z.catchT + .25) / .6, 0, 1);   // das gedrehte Ende verkohlt, sobald die Flamme dran ist
+  if (state === "unlit" || (state === "lighting" && lightT < Z.ign + .8)) {
+    const k = state === "unlit" ? 1 : 1 - clamp((lightT - Z.ign) / .8, 0, 1);   // das gedrehte Ende verbrennt in der eigenen Flamme
     ctx.save();
     ctx.beginPath(); ctx.moveTo(burnStart - 1, -r1); ctx.quadraticCurveTo(burnStart + r1 * .6 * k, -r1 * .3, burnStart + r1 * 1.3 * k, -r1 * .05);
     ctx.lineTo(burnStart + r1 * 1.3 * k, r1 * .1); ctx.quadraticCurveTo(burnStart + r1 * .5 * k, r1 * .5, burnStart - 1, r1); ctx.closePath();
     const tg = ctx.createLinearGradient(0, -r1, 0, r1);
     tg.addColorStop(0, "#6f6656"); tg.addColorStop(.3, "#d9cfb9"); tg.addColorStop(1, "#3a3328");
-    ctx.fillStyle = state === "lighting" && lightT > Z.catchT - .25 ? `rgba(60,35,20,${1 - k * .4})` : tg; ctx.fill();
+    ctx.fillStyle = state === "lighting" && lightT > Z.ign ? `rgba(60,35,20,${1 - k * .4})` : tg; ctx.fill();
     ctx.strokeStyle = "rgba(80,60,40,.35)"; ctx.lineWidth = 1;
     for (let i = 1; i < 4; i++) { ctx.beginPath(); ctx.moveTo(burnStart, -r1 + i * r1 * .5); ctx.quadraticCurveTo(burnStart + r1 * .5 * k, -r1 * .2 + i * .1 * r1, burnStart + r1 * 1.2 * k, 0); ctx.stroke(); }
     ctx.restore();
@@ -1158,7 +1089,7 @@ function render(t) {
   }
 
   // Feuerzeug
-  if (state === "lighting") { drawZippo(t, lightT); drawFlame(t, lightT); }
+  if (state === "lighting") drawFlame(t, lightT);
 
   // Rauch: in eine halb aufgelöste Ebene zeichnen (Rauch ist weich, spart viel Rechenzeit), dann aufhellend drüberlegen
   const base = new DOMMatrix([dpr, 0, 0, dpr, 0, 0]).multiply(frameM);
@@ -1212,12 +1143,9 @@ function update(dt, t) {
     lightT += dt;
     if (mode === "breath") breathStep(dt);   // Grundrauschen und Lautsprecher-Kopplung schon beim Anzünden einmessen
     if (lightT >= Z.strike && lightT - dt < Z.strike) zippoSparks();
-    const easeC = x => { x = clamp(x, 0, 1); return x * x * (3 - 2 * x); };
-    camK = lightT < Z.off ? easeC(lightT / .45) : 1 - easeC((lightT - Z.off - .05) / (Z.lit - Z.off - .05));
-    buildFrame();
     heat = clamp((lightT - Z.catchT) * .6, 0, .6);
     if (lightT > Z.catchT + .1 && bx > burnStart - R * .4) bx -= dt * R * .5;
-    if (lightT > Z.lit) { state = "lit"; camK = 0; buildFrame(); }
+    if (lightT > Z.lit) state = "lit";
   }
   diveUpdate(dt);
   if (state === "lit") {
@@ -1259,7 +1187,8 @@ function update(dt, t) {
   haze = Math.max(0, haze - dt * .008);
   if (state === "lit") { diveCheck(); autoPuff(); updateTilt(dt); }
   // Stop-and-go: Musik nur, solange wirklich gezogen wird (Finger in Bewegung bzw. Ziehgeräusch)
-  musicGate(musicOn && (state === "dive" || (state === "lit" && (dive.session || drawingNow()))));
+  tripCheck(dt);
+  musicGate(musicOn && (state === "dive" || (state === "lit" && (dive.session || trip.on || drawingNow()))));
   musicTone();
 
   // Ausatmen
@@ -1512,6 +1441,7 @@ addEventListener("pointercancel", e => holds.delete(e.pointerId));
 
 const otherHolds = () => [...holds.entries()].filter(([id, h]) => !(id === pid && (mode === "finger" || h.moved)));
 function diveCheck() {
+  if (trip.on) return;
   if (state !== "lit" || dive.phase !== "none") return;
   const now = performance.now();
   if (dive.session) {
@@ -1548,6 +1478,57 @@ function diveUpdate(dt) {
     else if (pid === null) drawing = false;
   }
 }
+
+// ---------- Beim dritten Zug: kurz an den Strand (Video vom Spieler) ----------
+const trip = { played: false, on: false, buf: null, raw: null, src: null, gain: null, run: 0, timer: 0 };
+const tripEl = document.getElementById("trip"), tripVid = document.getElementById("tripVid");
+fetch("strand.mp3").then(r => r.ok ? r.arrayBuffer() : null).then(b => { trip.raw = b; decodeTrip(); }).catch(() => {});
+function decodeTrip() {
+  if (!ac || !trip.raw || trip.buf) return;
+  const raw = trip.raw; trip.raw = null;
+  ac.decodeAudioData(raw, b => trip.buf = b, () => {});
+}
+function tripCheck(dt) {
+  if (trip.on && state !== "lit") { stopTrip(); return; }
+  if (trip.played || state !== "lit" || dive.phase !== "none" || dive.session) return;
+  trip.run = drawingNow() ? trip.run + dt : 0;
+  if (totalDrags >= 2 && trip.run > .35) startTrip();   // die ersten zwei Züge sind durch, der dritte läuft
+}
+function startTrip() {
+  trip.played = true; trip.on = true;
+  // Ausrichtung: Oberkante des Videos zeigt nach oben (Bewegungssensor), sonst wie beim Halten angenommen
+  let rot = H > W ? (orient ? -90 : 90) : 0;
+  if (gScreen && Math.hypot(gScreen[0], gScreen[1]) > 3) rot = Math.round(Math.atan2(-gScreen[0], gScreen[1]) * 180 / Math.PI / 90) * 90;
+  const side = Math.abs(rot) % 180 === 90;
+  tripVid.style.width = (side ? H : W) + "px"; tripVid.style.height = (side ? W : H) + "px";
+  tripVid.style.setProperty("--rot", rot + "deg");
+  tripEl.hidden = false; void tripEl.offsetWidth; tripEl.classList.add("on");
+  try { tripVid.currentTime = 0; } catch (e) {}
+  let started = false;
+  const go = () => { if (started || !trip.on) return; started = true; tripSound(); };
+  tripVid.onplaying = go;
+  tripVid.onended = () => stopTrip();
+  tripVid.play().catch(() => {});
+  setTimeout(go, 600);                                   // Ton auch, falls das Video noch lädt
+  clearTimeout(trip.timer); trip.timer = setTimeout(stopTrip, 11000);
+}
+function tripSound() {
+  decodeTrip();
+  if (!ac || !trip.buf) return;
+  const src = ac.createBufferSource(), g = ac.createGain();
+  src.buffer = trip.buf; g.gain.value = .55;            // etwas leiser als das Original
+  src.connect(g).connect(master); src.start(ac.currentTime, clamp(tripVid.currentTime || 0, 0, trip.buf.duration - .1));
+  trip.src = src; trip.gain = g;
+}
+function stopTrip() {
+  if (!trip.on) return;
+  trip.on = false; clearTimeout(trip.timer);
+  tripEl.classList.remove("on");
+  setTimeout(() => { if (!trip.on) { tripEl.hidden = true; tripVid.pause(); } }, 750);
+  if (trip.src && ac) { const t = ac.currentTime; trip.gain.gain.setTargetAtTime(0, t, .2); try { trip.src.stop(t + .9); } catch (e) {} }
+  trip.src = null;
+}
+tripEl.addEventListener("pointerdown", e => { e.stopPropagation(); stopTrip(); });   // Antippen beendet den Ausflug
 
 // Gerenderte Joint-Szene auf einen Punkt zoomen (Kameraflug)
 // Kameraflug: auf die Glut zoomen, sie dabei zur Bildmitte ziehen und in die Ausrichtung der Stadt hineindrehen
@@ -2159,7 +2140,8 @@ document.getElementById("light").onclick = async () => {
   mode = useMode; knock = prefKnock && motionOk; status(""); mStep = 0;
   if (note) { setCue(note); setTimeout(() => setCue(""), 5000); }
   document.getElementById("start").classList.add("gone");
-  state = "lighting"; lightT = 0; unexhaled = 0; autoPuffAt = 0;
+  state = "lighting"; lightT = 0; unexhaled = 0; autoPuffAt = 0; trip.played = false; trip.run = 0;
+  decodeTrip(); try { tripVid.load(); } catch (e) {}
   lighterSound();
   try { navigator.wakeLock && navigator.wakeLock.request("screen").catch(() => {}); } catch (e) {}
 };
