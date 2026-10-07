@@ -1270,7 +1270,8 @@ function update(dt, t) {
   if (state === "lit") { diveCheck(); autoPuff(); updateTilt(dt); }
   // Stop-and-go: Musik nur, solange wirklich gezogen wird (Finger in Bewegung bzw. Ziehgeräusch)
   tripCheck(dt);
-  musicGate(musicOn && (state === "dive" || (state === "lit" && (dive.session || trip.on || drawingNow()))));
+  const tripMute = trip.on && trip.clip && trip.clip.noMusic && trip.phase !== "in";   // beim zweiten Video nur dessen Ton
+  musicGate(musicOn && !tripMute && (state === "dive" || (state === "lit" && (dive.session || trip.on || drawingNow()))));
   musicTone();
 
   // Ausatmen
@@ -1407,6 +1408,7 @@ let stubT = 0, stubFrom = 0, stubSide = 1, smears = [], stubDone = false;
 let crushCl = [], ashLen0 = 0;
 function stubOut() {
   if (state !== "lit") return;
+  if (trip.on && trip.clip && trip.clip.locked) return;   // das zweite Video wird nicht unterbrochen
   state = "stub"; stubT = 0; stubFrom = bx; stubSide = Math.random() < .5 ? -1 : 1; stubDone = false; stubC = 0;
   makeKinks(); makeCrush();
   if (dive.phase !== "none") { dive.phase = "none"; worldAudio(false); }
@@ -1608,7 +1610,8 @@ function diveUpdate(dt) {
 //  4. Zug: Animations-Video, quer (auf dem Hochkant-Bildschirm gedreht), läuft ganz durch
 const TRIPS = [
   { at: 3, audio: "strand.mp3", orient: "portrait", maxMs: 3000, gain: .55 },
-  { at: 4, audio: "trip2.mp3", orient: "landscape", maxMs: 14500, gain: .6 },
+  // läuft immer ganz durch (Antippen, Bewegung usw. beenden es nicht), nur mit eigenem Ton – ohne Hintergrundmusik
+  { at: 4, audio: "trip2.mp3", orient: "landscape", maxMs: 16000, gain: .7, locked: true, noMusic: true },
 ];
 const trip = { phase: "none", t: 0, on: false, clip: null, src: null, gain: null, run: 0, timer: 0, still: false };
 let drawCount = 0, fingerCounted = false;
@@ -1704,6 +1707,7 @@ tripEl.addEventListener("pointerdown", e => {
   e.stopPropagation();
   if (trip.phase !== "video") return;
   if (trip.still && trip.clip) { trip.still = false; trip.clip.vid.play().catch(() => {}); return; }
+  if (trip.clip && trip.clip.locked) return;   // läuft in jedem Fall ganz
   stopTrip();
 });
 
