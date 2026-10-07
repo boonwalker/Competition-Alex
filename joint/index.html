@@ -1448,7 +1448,7 @@ function render(t) {
 }
 // Noch kein Zug 3 s nach dem Anzünden: "Nimm nen kräftigen Zug!" mit gekrümmtem Pfeil, der sich aufbaut und
 // mehrfach genau auf das Mikrofon am Filterende zeigt; das Ganze pulsiert leicht
-let pullHintT = 0, pullHintA = 0, pullHintDone = false;
+let pullHintT = 0, pullHintA = 0, pullHintDone = false, worldVisited = false, autoWorldDone = false;
 function drawPullHint(t) {
   if (pullHintA < .01) return;
   const a = pullHintA, fs = Math.min(W, H) * .1, f = frameM.transformPoint(new DOMPoint(x0 + r1 * .3, 0));
@@ -1997,7 +1997,7 @@ function diveCheck() {
 }
 function startDive(fast) {
   const q = frameM.transformPoint(new DOMPoint(bx + radius(bx) * .15, 0));
-  dive.phase = "in"; dive.t = 0; dive.ox = q.x; dive.oy = q.y; dive.fast = fast; dive.session = true; dive.calm = false; dive.pair0 = Math.random() < .5 ? 0 : 1;
+  dive.phase = "in"; dive.t = 0; dive.ox = q.x; dive.oy = q.y; dive.fast = fast; dive.session = true; dive.calm = false; dive.auto = false; worldVisited = true; dive.pair0 = Math.random() < .5 ? 0 : 1;
   dive.rot = slitRot(0);   // so weit mitdrehen, dass der Glühschlitz am Ende waagerecht liegt (wie der Horizont der Stadt)
   // Nullpunkt: die Welt erscheint immer waagerecht; jede Bewegung des Handys dreht die Sicht von hier aus
   dive.zero = gScreen && Math.hypot(gScreen[0], gScreen[1]) > 3 ? Math.atan2(-gScreen[0], gScreen[1]) : null;
@@ -2013,7 +2013,9 @@ function diveUpdate(dt) {
   if (dive.phase === "in" && dive.t >= dIn()) { dive.phase = "world"; dive.t = 0; if (!world || ww !== worldDims()[0]) world = makeWorld(); world.theta = worldTargetAngle(); world.fire = 1; world.hold = 1; world.cool = 0; world.sS = 0; world.hpFl = 0; world.hiT = 0; world.rels = []; world.gap = null; world.lastGap = 0; }
   else if (dive.phase === "world") {
     updateWorld(dt);
-    if (otherHolds().length === 0 && dive.t > (dive.fast ? .15 : .6)) {
+    // von selbst hineingeflogen: bleibt mindestens 3 s und so lange, wie noch gezogen wird (Bildschirm halten geht natürlich auch)
+    const autoStay = dive.auto && (dive.t < 3 || (world.sS > .1 && dive.t < 15));
+    if (otherHolds().length === 0 && !autoStay && dive.t > (dive.fast ? .15 : .6)) {
       // losgelassen, während gerade nicht gezogen wird: direkt zurück in "brennt gerade nicht ab" (kein Nachglühen, Musik aus)
       dive.calm = world.sS < .15 && !(mode === "finger" && performance.now() - lastFingerMove < 300);
       dive.phase = "out"; dive.t = 0; dive.rot = slitRot(Math.atan2(Math.sin(world.theta), Math.cos(world.theta))); if (world.gap) { world.gap = null; musicDuck(false); } worldAudio(false); whoosh(false); }
@@ -2076,7 +2078,12 @@ function tripCheck(dt) {
   // zwischen zwei Videos liegt immer mindestens ein Zug ohne Video
   const lastAt = Math.max(-9, ...TRIPS.filter(c => c.played).map(c => c.playedAt ?? -9));
   const c = TRIPS.find(c => !c.played && c.arm !== undefined && drawCount > c.arm && drawCount > lastAt + 1);
-  if (c && trip.run > .3) startTrip(c);
+  if (c && trip.run > .3) { startTrip(c); return; }
+  // Wer bis nach dem zweiten Video noch nie in der Glutwelt war, fliegt beim zweiten Zug danach einmal von selbst hinein
+  const v2 = TRIPS[1];
+  if (!worldVisited && !autoWorldDone && v2.played && drawCount >= (v2.playedAt ?? 1e9) + 2 && trip.run > .3) {
+    autoWorldDone = true; startDive(false); dive.auto = true;
+  }
 }
 function startTrip(c) {
   c.played = true; c.playedAt = drawCount; trip.clip = c; trip.on = true; trip.still = false;
@@ -2279,7 +2286,7 @@ function renderDive(t) {
     render(t); zoomFrame(u, u * u * .8, clamp((u - .9) / .1, 0, 1));
   } else if (dive.phase === "world") {
     renderWorld(t);
-    drawHints(dive.t);
+    if (!(dive.auto && otherHolds().length === 0)) drawHints(dive.t);   // "Lass los!" passt nicht, wenn man gar nicht drückt
     if (dive.t < .25) { ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.fillStyle = `rgba(255,236,200,${1 - dive.t / .25})`; ctx.fillRect(0, 0, W, H); }
   } else if (dive.phase === "out") {
     const u = 1 - dive.t / dOut();
@@ -2981,7 +2988,7 @@ document.getElementById("light").onclick = async () => {
   mode = useMode; knock = prefKnock && motionOk; status(""); mStep = 0;
   if (note) { setCue(note); setTimeout(() => setCue(""), 5000); }
   document.getElementById("start").classList.add("gone");
-  state = "lighting"; lightT = 0; unexhaled = 0; pullHintDone = false; autoPuffAt = 0; TRIPS.forEach(c => { c.played = false; c.arm = undefined; }); trip.run = 0;
+  state = "lighting"; lightT = 0; unexhaled = 0; pullHintDone = false; worldVisited = false; autoWorldDone = false; autoPuffAt = 0; TRIPS.forEach(c => { c.played = false; c.arm = undefined; }); trip.run = 0;
   decodeTrip(); drawCount = 0;
   lighterSound();
   try { navigator.wakeLock && navigator.wakeLock.request("screen").catch(() => {}); } catch (e) {}
