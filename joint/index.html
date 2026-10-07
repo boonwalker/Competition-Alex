@@ -39,7 +39,8 @@ html, body { margin: 0; }
 .trip { position: fixed; inset: 0; z-index: 3; background: #000; overflow: hidden; opacity: 0; transition: opacity .3s ease; }
 .trip.on { opacity: 1; }
 /* Traumränder: weiche Wolken am Bildschirmrand, innen ein warmer Glutschimmer; atmen ganz langsam */
-.dream { position: absolute; inset: -4%; pointer-events: none; background-size: 100% 100%; animation: dreamy 5s ease-in-out infinite alternate; }
+.dream { position: absolute; inset: -4%; pointer-events: none; background-size: 100% 100%; animation: dreamy 5s ease-in-out infinite alternate, emberGlow 1.9s ease-in-out infinite alternate; }
+@keyframes emberGlow { 0% { filter: brightness(.92) saturate(1); } 40% { filter: brightness(1.12) saturate(1.15); } 70% { filter: brightness(.98) saturate(1.05); } 100% { filter: brightness(1.2) saturate(1.2); } }
 @keyframes dreamy { from { transform: scale(1); opacity: .92; } to { transform: scale(1.035) rotate(.4deg); opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .dream { animation: none; } }
 .trip.still video { animation: kenburns 9s ease-out forwards; }
@@ -1802,7 +1803,7 @@ function diveCheck() {
 function startDive(fast) {
   const q = frameM.transformPoint(new DOMPoint(bx + radius(bx) * .15, 0));
   dive.phase = "in"; dive.t = 0; dive.ox = q.x; dive.oy = q.y; dive.fast = fast; dive.session = true; dive.calm = false; dive.pair0 = Math.random() < .5 ? 0 : 1;
-  dive.rot = (Math.random() < .5 ? -1 : 1) * rand(.45, .8);   // beim Hineinfliegen ein wenig mitdrehen
+  dive.rot = slitRot(0);   // so weit mitdrehen, dass der Glühschlitz am Ende waagerecht liegt (wie der Horizont der Stadt)
   // Nullpunkt: die Welt erscheint immer waagerecht; jede Bewegung des Handys dreht die Sicht von hier aus
   dive.zero = gScreen && Math.hypot(gScreen[0], gScreen[1]) > 3 ? Math.atan2(-gScreen[0], gScreen[1]) : null;
   if (world) world.theta = 0;
@@ -1820,7 +1821,7 @@ function diveUpdate(dt) {
     if (otherHolds().length === 0 && dive.t > (dive.fast ? .15 : .6)) {
       // losgelassen, während gerade nicht gezogen wird: direkt zurück in "brennt gerade nicht ab" (kein Nachglühen, Musik aus)
       dive.calm = world.sS < .15 && !(mode === "finger" && performance.now() - lastFingerMove < 300);
-      dive.phase = "out"; dive.t = 0; dive.rot = Math.atan2(Math.sin(world.theta), Math.cos(world.theta)); if (world.gap) { world.gap = null; musicDuck(false); } worldAudio(false); whoosh(false); }
+      dive.phase = "out"; dive.t = 0; dive.rot = slitRot(Math.atan2(Math.sin(world.theta), Math.cos(world.theta))); if (world.gap) { world.gap = null; musicDuck(false); } worldAudio(false); whoosh(false); }
   } else if (dive.phase === "out" && dive.calm && dive.t < dOut()) heat = Math.max(0, heat - dt * 3);   // Glut beruhigt sich schon im Rückflug
   else if (dive.phase === "out" && dive.t >= dOut()) {
     dive.phase = "none"; state = "lit"; dive.jointSince = performance.now();
@@ -1886,7 +1887,7 @@ function startTrip(c) {
   c.played = true; c.playedAt = drawCount; trip.clip = c; trip.on = true; trip.still = false;
   // Kameraflug wie in die Glutwelt: auf die Glut zoomen, hineindrehen, dann das Video
   const q = frameM.transformPoint(new DOMPoint(bx + radius(bx) * .15, 0));
-  dive.ox = q.x; dive.oy = q.y; dive.fast = false; dive.rot = (Math.random() < .5 ? -1 : 1) * rand(.45, .8);
+  dive.ox = q.x; dive.oy = q.y; dive.fast = false; dive.rot = slitRot(Math.PI / 2);   // Glühschlitz am Ende senkrecht (Video läuft quer)
   trip.phase = "in"; trip.t = 0; whoosh(true);
   try { c.vid.currentTime = 0; } catch (e) {}
 }
@@ -1899,21 +1900,66 @@ let dreamKey = "";
 function dreamFrame() {
   const el = document.getElementById("dream"), w = Math.round(W * 1.08), h = Math.round(H * 1.08), key = w + "x" + h;
   if (key === dreamKey) return; dreamKey = key;
-  const c = document.createElement("canvas"); c.width = w; c.height = h; const g = c.getContext("2d");
+  const sc = Math.min(2, dpr), c = document.createElement("canvas"); c.width = Math.round(w * sc); c.height = Math.round(h * sc);
+  const g = c.getContext("2d"); g.scale(sc, sc);
   const m = Math.min(w, h), cx = w / 2, cy = h / 2;
-  // warmer Glutschimmer als weicher Ring (dezent wie der Glutkreis)
-  const ring = g.createRadialGradient(cx, cy, m * .3, cx, cy, Math.max(w, h) * .62);
-  ring.addColorStop(0, "rgba(255,150,60,0)"); ring.addColorStop(.55, "rgba(255,140,50,.12)"); ring.addColorStop(.8, "rgba(255,120,40,.22)"); ring.addColorStop(1, "rgba(120,40,10,.35)");
+  // Abstand zum Rand (0 = Rand, 1 = Mitte), etwas unregelmäßig: so wird der Rahmen zum Glutnest statt zum Rechteck
+  const edgeD = (x, y) => Math.min(x, w - x, y, h - y) / (m * .5);
+  const pick = (lo, hi) => { for (let t = 0; t < 30; t++) { const x = Math.random() * w, y = Math.random() * h, d = edgeD(x, y) + (Math.random() - .5) * .08; if (d >= lo && d <= hi) return [x, y, d]; } return [Math.random() * w, 0, 0]; };
+  // warmer Glutschimmer nach innen
+  const ring = g.createRadialGradient(cx, cy, m * .28, cx, cy, Math.max(w, h) * .62);
+  ring.addColorStop(0, "rgba(255,150,60,0)"); ring.addColorStop(.5, "rgba(255,140,50,.18)"); ring.addColorStop(.78, "rgba(255,110,30,.38)"); ring.addColorStop(1, "rgba(150,40,8,.6)");
   g.fillStyle = ring; g.fillRect(0, 0, w, h);
-  // Wolkenbänke rundherum: viele weiche, helle Ballen, zum Rand hin dichter
-  for (let i = 0; i < 190; i++) {
-    const a = Math.random() * 6.283, edge = Math.pow(Math.random(), .4);
-    const ex = cx + Math.cos(a) * w * (.36 + .24 * edge), ey = cy + Math.sin(a) * h * (.36 + .24 * edge);
-    const r = m * rand(.07, .2) * (.6 + edge * .6), warm = Math.random();
+  // Traumwolken: dichter und heller als zuvor, zwischen Glutnest und Bild
+  for (let i = 0; i < 260; i++) {
+    const [ex, ey, d] = pick(.12, .62), r = m * rand(.08, .22) * (1.15 - d * .7), warm = Math.random(), k = 1 - d / .62;
     const bg = g.createRadialGradient(ex, ey, 0, ex, ey, r);
-    const col = warm < .25 ? "255,214,170" : warm < .4 ? "255,180,120" : "250,244,236";
-    bg.addColorStop(0, `rgba(${col},${(.08 + .22 * edge).toFixed(2)})`); bg.addColorStop(.6, `rgba(${col},${(.03 + .09 * edge).toFixed(2)})`); bg.addColorStop(1, `rgba(${col},0)`);
+    const col = warm < .3 ? "255,214,170" : warm < .5 ? "255,186,128" : "252,246,238";
+    bg.addColorStop(0, `rgba(${col},${(.12 + .3 * k).toFixed(2)})`); bg.addColorStop(.55, `rgba(${col},${(.05 + .13 * k).toFixed(2)})`); bg.addColorStop(1, `rgba(${col},0)`);
     g.fillStyle = bg; g.fillRect(ex - r, ey - r, r * 2, r * 2);
+  }
+  // Glutnest am Rand: verkohlter Grund ...
+  for (let i = 0; i < 160; i++) {
+    const [ex, ey, d] = pick(0, .28), r = m * rand(.05, .12), bg = g.createRadialGradient(ex, ey, 0, ex, ey, r);
+    bg.addColorStop(0, `rgba(28,8,3,${Math.max(0, .9 - d * 2.6).toFixed(2)})`); bg.addColorStop(1, "rgba(28,8,3,0)");
+    g.fillStyle = bg; g.fillRect(ex - r, ey - r, r * 2, r * 2);
+  }
+  // ... darauf glühende und verkohlte Brocken mit leuchtenden Rissen dazwischen
+  const coals = [];
+  // (der Rahmen ragt 4 % über den Bildschirm hinaus: das Nest beginnt erst dort richtig dicht)
+  for (let i = 0; i < 1100; i++) { const [x, y, d] = pick(.04, .3), f = clamp(1 - (d - .06) / .24, 0, 1); if (Math.random() > .25 + f) continue; coals.push({ x, y, d, r: m * rand(.008, .032) * (.5 + .7 * f), hot: Math.random() < .2 + .35 * f }); }
+  coals.sort((a, b) => b.d - a.d);
+  g.globalCompositeOperation = "lighter";
+  for (const k of coals) {   // Glut zwischen den Brocken
+    const rr = k.r * 2.4, bg = g.createRadialGradient(k.x, k.y, 0, k.x, k.y, rr);
+    bg.addColorStop(0, `rgba(255,120,30,${k.hot ? .55 : .2})`); bg.addColorStop(1, "rgba(255,60,0,0)");
+    g.fillStyle = bg; g.fillRect(k.x - rr, k.y - rr, rr * 2, rr * 2);
+  }
+  g.globalCompositeOperation = "source-over";
+  for (const k of coals) {
+    const n = 5 + (Math.random() * 5 | 0), rot = Math.random() * 6.283, sq = rand(.6, 1);
+    g.beginPath();
+    for (let q = 0; q < n; q++) { const a = q / n * 6.283 + rand(-.35, .35), rr = k.r * rand(.45, 1.15), px = Math.cos(a) * rr, py = Math.sin(a) * rr * sq; g.lineTo(k.x + px * Math.cos(rot) - py * Math.sin(rot), k.y + px * Math.sin(rot) + py * Math.cos(rot)); }
+    g.closePath();
+    const ox = rand(-.3, .3) * k.r, oy = rand(-.3, .3) * k.r, bg = g.createRadialGradient(k.x + ox, k.y + oy, 0, k.x, k.y, k.r * 1.1);
+    if (k.hot) { bg.addColorStop(0, "#ffd27a"); bg.addColorStop(.18, "#ff8c26"); bg.addColorStop(.5, "#b8320a"); bg.addColorStop(.85, "#4a0e04"); bg.addColorStop(1, "#1c0603"); }
+    else { bg.addColorStop(0, "#3a1a10"); bg.addColorStop(.55, "#1a0c07"); bg.addColorStop(1, "#080403"); }
+    g.fillStyle = bg; g.fill();
+    g.save(); g.clip();
+    for (let q = 0; q < 4; q++) {   // verkohlte Kruste bzw. Aschebelag in Flecken
+      const fx = k.x + rand(-1, 1) * k.r, fy = k.y + rand(-1, 1) * k.r, fr = k.r * rand(.2, .55);
+      g.fillStyle = k.hot ? `rgba(28,8,3,${rand(.35, .7).toFixed(2)})` : `rgba(140,130,120,${rand(.1, .3).toFixed(2)})`;
+      g.beginPath(); g.ellipse(fx, fy, fr, fr * rand(.4, .9), rand(0, 3), 0, 7); g.fill();
+    }
+    g.restore();
+    g.strokeStyle = k.hot ? "rgba(255,170,70,.35)" : `rgba(255,90,20,${rand(.15, .45).toFixed(2)})`; g.lineWidth = .7; g.stroke();   // glimmende Bruchkanten
+  }
+  // Funken und kleine Glutpunkte, die ins Bild schweben
+  g.globalCompositeOperation = "lighter";
+  for (let i = 0; i < 140; i++) {
+    const [x, y] = pick(.05, .4), r = rand(.8, 2.6), bg = g.createRadialGradient(x, y, 0, x, y, r * 3);
+    bg.addColorStop(0, "rgba(255,235,170,.95)"); bg.addColorStop(.35, "rgba(255,140,40,.55)"); bg.addColorStop(1, "rgba(255,60,0,0)");
+    g.fillStyle = bg; g.fillRect(x - r * 3, y - r * 3, r * 6, r * 6);
   }
   el.style.backgroundImage = `url(${c.toDataURL("image/png")})`;
 }
@@ -1981,6 +2027,12 @@ tripEl.addEventListener("pointerdown", e => {
 // Gerenderte Joint-Szene auf einen Punkt zoomen (Kameraflug)
 // Kameraflug: auf die Glut zoomen, sie dabei zur Bildmitte ziehen und in die Ausrichtung der Stadt hineindrehen
 const easeIO = x => x < .5 ? 2 * x * x : 1 - Math.pow(-2 * x + 2, 2) / 2;
+// Drehung für den Kameraflug: der Glühschlitz (die Glut quer zur Joint-Achse) endet in der Ausrichtung der nächsten Szene
+function slitRot(target) {
+  dive.slitBase = Math.atan2(frameM.b, frameM.a) + Math.PI / 2;
+  const r = target - dive.slitBase;
+  return r - Math.PI * Math.round(r / Math.PI);
+}
 function zoomFrame(u, glow, flash) {
   if (!diveTmp || diveTmp.width !== cv.width || diveTmp.height !== cv.height) { diveTmp = document.createElement("canvas"); diveTmp.width = cv.width; diveTmp.height = cv.height; }
   const tc = diveTmp.getContext("2d"); tc.setTransform(1, 0, 0, 1, 0, 0); tc.drawImage(cv, 0, 0);
@@ -1999,23 +2051,40 @@ function zoomFrame(u, glow, flash) {
     ctx.strokeStyle = `rgba(255,${150 + (i * 37) % 100},60,${.28 * sp})`; ctx.lineWidth = 1 + (i % 3);
     ctx.beginPath(); ctx.moveTo(cx + Math.cos(a) * r0, cy + Math.sin(a) * r0); ctx.lineTo(cx + Math.cos(a + tw) * r1b, cy + Math.sin(a + tw) * r1b); ctx.stroke();
   }
+  glow *= .6;
   const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, Math.max(W, H));
   g.addColorStop(0, `rgba(255,220,140,${glow})`); g.addColorStop(.4, `rgba(255,120,30,${glow * .7})`); g.addColorStop(1, `rgba(120,20,0,${glow * .4})`);
   ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  // Glühschlitz: die Glut wird zu einem gleißenden Spalt quer über den ganzen Bildschirm, ausgerichtet wie die nächste Szene
+  const k = clamp((u - .45) / .4, 0, 1);
+  if (k > 0) {
+    const ang = (dive.slitBase || 0) + rot, ca = Math.cos(ang), sa = Math.sin(ang), hl = Math.min(Math.hypot(W, H) * .62, radius(bx) * z * .92);   // so lang wie die Glut im Zoom
+    const now = performance.now() / 1000, N = 48, line = () => {
+      ctx.beginPath();
+      for (let i = 0; i <= N; i++) {
+        const f = i / N * 2 - 1, wob = (Math.sin(f * 23 + now * 9) * .6 + Math.sin(f * 61 - now * 13) * .4) * 2.2 * (1 - Math.abs(f) * .5);
+        ctx.lineTo(cx + ca * f * hl - sa * wob, cy + sa * f * hl + ca * wob);
+      }
+    };
+    ctx.lineJoin = "round";
+    for (const [col, lw] of [[`rgba(255,90,20,${.28 * k})`, 46], [`rgba(255,140,40,${.45 * k})`, 20], [`rgba(255,200,110,${.7 * k})`, 8], [`rgba(255,250,225,${.95 * k})`, 3]]) {
+      line(); ctx.strokeStyle = col; ctx.lineWidth = lw * (.7 + .3 * k); ctx.stroke();
+    }
+  }
   ctx.restore();
   if (flash > 0) { ctx.fillStyle = `rgba(255,236,200,${flash})`; ctx.fillRect(0, 0, W, H); }
 }
 function renderDive(t) {
   if (dive.phase === "in") {
     const u = dive.t / dIn();
-    render(t); zoomFrame(u, u * u * .8, clamp((u - .8) / .2, 0, 1));
+    render(t); zoomFrame(u, u * u * .8, clamp((u - .9) / .1, 0, 1));
   } else if (dive.phase === "world") {
     renderWorld(t);
     drawHints(dive.t);
     if (dive.t < .25) { ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.fillStyle = `rgba(255,236,200,${1 - dive.t / .25})`; ctx.fillRect(0, 0, W, H); }
   } else if (dive.phase === "out") {
     const u = 1 - dive.t / dOut();
-    render(t); zoomFrame(u, u * u * .8, clamp((u - .7) / .3, 0, 1));
+    render(t); zoomFrame(u, u * u * .8, clamp((u - .75) / .25, 0, 1));
   }
 }
 
@@ -3299,7 +3368,7 @@ function loop(now) {
     else if (trip.phase === "in" || trip.phase === "out") {
       // Kameraflug in die Glut und zurück, wie bei der Glutwelt
       const u = trip.phase === "in" ? trip.t / dIn() : 1 - trip.t / dOut();
-      render(now / 1000); zoomFrame(clamp(u, 0, 1), u * u * .8, clamp(trip.phase === "in" ? (u - .8) / .2 : (u - .7) / .3, 0, 1));
+      render(now / 1000); zoomFrame(clamp(u, 0, 1), u * u * .8, clamp(trip.phase === "in" ? (u - .9) / .1 : (u - .75) / .25, 0, 1));
     } else render(now / 1000);
     safe = { bx, ashStart };
   } catch (e) {
