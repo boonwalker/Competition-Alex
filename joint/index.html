@@ -1766,9 +1766,9 @@ let lastFingerMove = 0;
 function drawStrength(dt) {
   const now = performance.now(), finger = now - lastFingerMove < 160 ? 1 : (pid !== null && drawing ? .3 : 0);
   if (mode === "breath" && micAna && ac) {
-    readMic(dt);
+    readMic(dt, false);
     const hi = bandPower(1500, 9000), lo = bandPower(40, 400), tot = hi + lo + bandPower(400, 1500);
-    const thr = 22 - micSens * .17, db = 10 * Math.log10(Math.max(hi, 1e-12) / micFloor);
+    const thr = 13 - sensUp, db = 10 * Math.log10(Math.max(hi, 1e-12) / micFloor);
     micFloor = hi < micFloor ? micFloor + (hi - micFloor) * .05 : micFloor;   // Grundrauschen nur nach unten nachführen
     return Math.max(finger, clamp((db - thr) / 16, 0, 1.2));
   }
@@ -2273,7 +2273,7 @@ async function startMic() {
   if (!ac) return false;
   try { await ac.resume(); } catch (e) {}
   connectMic();
-  micDeadT = 0; micAlive = false; micFixes = 0; micNeedTap = false;
+  micDeadT = 0; micAlive = false; micFixes = 0; micNeedTap = false; noDrawT = 0; sensUp = 0;
   micHud = $("micHudOn").checked || /[?&]mic\b/.test(location.search); $("micHud").hidden = !micHud;
   return true;
 }
@@ -2334,8 +2334,8 @@ document.addEventListener("pointerdown", () => { if (micNeedTap && micStream) fi
 // Der Mithör-Analysator am Ausgang zeigt, was gespielt wird; wie viel davon beim Mikro ankommt, wird je Frequenzband
 // gelernt (beim Anzünden mit dem Feuerzeug-Zischen eingemessen, danach laufend nachgeführt).
 const MB = [40, 120, 250, 400, 700, 1100, 1500, 2200, 3200, 4500, 6500, 9000];
-let cplDb = null, refHist = [], calibUntil = 0;
-function readMic(dt) {
+let cplDb = null, refHist = [], calibUntil = 0, calibR = [];
+function readMic(dt, learnUp) {
   micAna.getFloatFrequencyData(micBins);
   let pk = -200;
   for (let i = 0; i < micBins.length; i++) { const v = micBins[i]; if (!Number.isFinite(v)) micBins[i] = -160; else if (v > pk) pk = v; }
@@ -2348,8 +2348,13 @@ function readMic(dt) {
   }
   if (!refAna || !refBins || refAna.context !== micAna.context) return;
   refAna.getFloatFrequencyData(refBins);
-  if (!cplDb) { let st = null; try { st = JSON.parse(store.get("cpl", "null")); } catch (e) {} cplDb = new Float32Array(MB.length - 1).fill(-10); if (Array.isArray(st) && st.length === cplDb.length) cplDb.set(st.map(v => clamp(+v, -60, 10))); }
+  // Startwert vorsichtig niedrig; wird jede Runde neu eingemessen (nicht gespeichert: ein verkorkster Wert hielte sonst ewig)
+  if (!cplDb) cplDb = new Float32Array(MB.length - 1).fill(-14);
   const hz = ac.sampleRate / micAna.fftSize, now = performance.now(), calib = now < calibUntil, quietUser = breathState === "idle" && pid === null;
+  if (!calib && calibR.length) {
+    calibR.forEach((a, b) => { if (a && a.length >= 4) { a.sort((x, y) => x - y); cplDb[b] = clamp(a[Math.floor(a.length * .5)], -60, 6); } });
+    calibR = [];
+  }
   // Bandpegel des Ausgangs der letzten 0,35 s: deckt die unbekannte Laufzeit Lautsprecher -> Mikro ab
   const nb = MB.length - 1, qNow = new Float32Array(nb);
   for (let b = 0; b < nb; b++) {
@@ -2370,14 +2375,17 @@ function readMic(dt) {
     const rLow = 10 * Math.log10((M + 1e-30) / qMax), rHigh = 10 * Math.log10((M + 1e-30) / Math.max(qMin, 1e-30));
     if (maxDb > -80) {
       if (rHigh < cplDb[b]) cplDb[b] += (rHigh - cplDb[b]) * Math.min(1, dt * 1.5);
-      else if (rLow > cplDb[b]) cplDb[b] += (rLow - cplDb[b]) * Math.min(1, dt * (calib ? 3 : quietUser ? .5 : .03));
-      cplDb[b] = clamp(cplDb[b], -60, 10);
+      // nach oben nur in Ruhe (niemand zieht, pustet, tippt) und langsam – nie in der Glutwelt
+      else if (rLow > cplDb[b] && learnUp && !calib) cplDb[b] += (rLow - cplDb[b]) * Math.min(1, dt * (quietUser ? .25 : .03));
+      // Einmessen: gleichmäßige Stellen der Zippo-Geräusche sammeln, am Ende den unteren Mittelwert nehmen
+      // (ein Atemzug oder Wort zwischendurch verschiebt ihn kaum)
+      if (calib && rHigh - rLow < 6) (calibR[b] = calibR[b] || []).push((rLow + rHigh) / 2);
+      cplDb[b] = clamp(cplDb[b], -60, 6);
     }
     const echo = qMax * Math.pow(10, (cplDb[b] + 6) / 10);   // erwarteter Lautsprecher-Anteil plus 6 dB Sicherheit
     const keep = M > echo ? (M - echo) / M : 0, kd = keep > 1e-10 ? 10 * Math.log10(keep) : -100;
     for (let i = i0; i < i1; i++) micBins[i] = Math.max(-160, micBins[i] + kd);
   }
-  if (calib) store.set("cpl", JSON.stringify(Array.from(cplDb, v => Math.round(v * 10) / 10)));
 }
 // Zippo-Geräusche. Zugleich der erste Mikrofon-Test: Das Mikro hört mit, wie laut der Lautsprecher bei ihm ankommt
 // (Einmessen der Kopplung), und ob es überhaupt etwas hört.
@@ -2422,12 +2430,15 @@ function lighterSound() {
   const fl = ac.createOscillator(), flg = ac.createGain(); fl.frequency.value = 7.5; flg.gain.value = .07; fl.connect(flg).connect(wg.gain);
   w.connect(wl).connect(wg).connect(bus); w.start(ti, Math.random()); w.stop(tf + .1); fl.start(ti); fl.stop(tf + .1);
   const hs = zNoise(ti, tf - ti + .05, "highpass", 2200, .5, .07, .05, 5, bus);
+  // tiefes Fauchen der aufflammenden Spitze – deckt beim Einmessen auch die Bässe ab (darin liegt die gedämpfte Musik)
+  const rb = zNoise(ti, tf - ti + .05, "lowpass", 380, .7, .5, .06, 5, bus);
+  rb.gain.setValueAtTime(.5, tf - .25); rb.gain.linearRampToValueAtTime(0, tf + .02);
   hs.gain.setValueAtTime(.07, tf - .03); hs.gain.linearRampToValueAtTime(0, tf + .02);
   // 4) Deckel zu: tieferes, trockenes "Klack"
   const tc = tf + .02;
   zNoise(tc, .04, "bandpass", 1900, 1.8, 1, .001, .008, bus);
   zRing(tc, [[1640, .45, .07], [2890, .3, .05], [4120, .2, .035]], .45, bus);
-  if (micAna) { calibUntil = performance.now() + (Z.off + .3) * 1000; micTest = { base: micPeak, max: -200, t0: performance.now() }; }
+  if (micAna) { calibUntil = performance.now() + (Z.off + .3) * 1000; calibR = []; micTest = { base: micPeak, max: -200, t0: performance.now() }; }
 }
 // Mikro-Test: hat das Mikro auf das Zippo reagiert? (steht in der Mikro-Anzeige, ?mic)
 let micTest = null;
@@ -2441,6 +2452,7 @@ function stopMic() {
 //  Ziehen  = helles Zischen (Schwerpunkt hoch, wenig Tiefen)  -> Joint brennt, Rauch sammelt sich in der Lunge
 //  Pusten  = Wind-Rumpeln am Mikro (Schwerpunkt tief)          -> Ausatmen, solange Rauch in der Lunge ist
 // Beliebig viele Züge hintereinander sind möglich, ausgeatmet wird erst beim Pusten.
+let noDrawT = 0, sensUp = 0;
 let breathState = "idle", micLo = 0, micHi = 0, micTot = 0, loFloor = 1e-7, totFloor = 1e-7, micBlow = 0;
 let evStart = 0, lungsBefore = 0, micOnSince = 0, micPrevSig = false, lungs = 0, lungsAt = 0, blowScore = .5, centroid = 0, lastBxBreath = 0, micHud = false;
 function setCue(t) { $("cue").hidden = !t; $("cue").textContent = t || ""; }
@@ -2453,7 +2465,7 @@ function bandPower(lo, hi) {
 function track(fl, v, dt) { fl = v < fl ? fl + (v - fl) * Math.min(1, dt * 3) : fl * (1 + dt * .08); return Math.max(fl, 1e-9); }
 function breathStep(dt) {
   if (!micAna) return;
-  readMic(dt);
+  readMic(dt, true);
   const hz = ac.sampleRate / micAna.fftSize;
   const lo = bandPower(40, 400), mid = bandPower(400, 1500), hi = bandPower(1500, 9000), tot = lo + mid + hi;
   // spektraler Schwerpunkt 100 Hz … 9 kHz
@@ -2461,13 +2473,18 @@ function breathStep(dt) {
   for (let i = Math.floor(100 / hz); i < Math.min(micBins.length, Math.floor(9000 / hz)); i++) { const pw = Math.pow(10, micBins[i] / 10); sw += pw * i * hz; sp += pw; }
   centroid = sp > 0 ? sw / sp : 0;
 
-  const thr = 22 - micSens * .17;                    // 5 … 22 dB über dem Grundrauschen
+  // Schwelle über dem Grundrauschen. Hört das Mikro nach dem Anzünden lange keinen Zug, wird es nach und nach empfindlicher
+  // (leise Atmer, leise Mikros); löst Dauerlärm Fehlalarm aus, wird es wieder unempfindlicher.
+  if (state === "lit" && breathState === "idle" && pid === null) { noDrawT += dt; if (noDrawT > 5) sensUp = Math.min(7, Math.max(sensUp, (noDrawT - 5) * .6)); }
+  const thr = 13 - sensUp;
   if (breathState === "idle") { micFloor = track(micFloor, hi, dt); loFloor = track(loFloor, lo, dt); totFloor = track(totFloor, tot, dt); }
   micHi = 10 * Math.log10(hi / micFloor); micLo = 10 * Math.log10(lo / loFloor); micTot = 10 * Math.log10(tot / totFloor);
   micDb = Math.max(micHi, micLo, micTot);
   // Was der Lautsprecher beisteuert, ist schon abgezogen; tiefe Bänder brauchen trotzdem mehr Abstand (Raumhall, Handgeräusche)
   // Läuft Musik, zusätzlich 6 dB mehr verlangen: Verzerrungen des Handy-Lautsprechers lassen sich nicht ganz herausrechnen
-  const extra = mGate ? 6 : 0, sig = micHi > thr + extra || micDb > thr + 10 + extra;
+  // mit Hysterese: ein laufender Zug darf etwas leiser werden, ohne abzureißen
+  const onThr = thr + (mGate ? 3 : 0), hiThr = breathState === "draw" ? onThr - 3 : onThr;
+  const sig = micHi > hiThr || micDb > onThr + 10;
   const now = performance.now();
   const wasSilent = !micPrevSig && now - micLastOn > 120; micPrevSig = sig;
   if (sig) micLastOn = now;
@@ -2489,14 +2506,14 @@ function breathStep(dt) {
     if (micOnTime > .12 && state === "lit") {
       // Ziehen ist der Normalfall. Pusten zählt nur, wenn Rauch in der Lunge ist UND der Klang eindeutig nach Pusten klingt.
       breathState = lungs > .05 && blowScore > .7 ? "blow" : "draw";
-      if (breathState === "draw") { drawing = true; drawTime = 0; drawFrom = bx; lastBxBreath = bx; evStart = now; lungsBefore = lungs; autoPuffAt = 0; drawCount++; }
+      if (breathState === "draw") { drawing = true; drawTime = 0; drawFrom = bx; lastBxBreath = bx; evStart = now; lungsBefore = lungs; autoPuffAt = 0; drawCount++; noDrawT = 0; }
     }
   } else if (breathState === "draw") {
     lungs += Math.max(0, lastBxBreath - bx) / (L * .08); lastBxBreath = bx; lungsAt = now;
     if (silentFor > 300) { drawing = false; breathState = "idle"; if (drawFrom - bx > r1 * .15) totalDrags++; drawEnded(); }
     else if (now - evStart > 6000) {
       // so lange zieht niemand: das ist Dauerlärm, als neues Grundrauschen übernehmen
-      drawing = false; breathState = "idle"; micFloor = hi; loFloor = lo; totFloor = tot;
+      drawing = false; breathState = "idle"; micFloor = hi; loFloor = lo; totFloor = tot; sensUp = Math.max(0, sensUp - 3);
     }
     else if (lungsBefore > .05 && blowScore > .85) { drawing = false; breathState = "blow"; if (drawFrom - bx > r1 * .15) totalDrags++; }
   } else if (breathState === "blow") {
@@ -2511,9 +2528,9 @@ function breathStep(dt) {
   micInt += ((breathState === "draw" ? drawRaw : 0) - micInt) * Math.min(1, dt * 10);
   micBlow += ((breathState === "blow" && lungs > 0 ? blowRaw : 0) - micBlow) * Math.min(1, dt * 10);
   if (lungs > 0 && now - lungsAt > 25000) lungs = 0;   // zu lange angehalten: Rauch ist weg
-  setCue(micNeedTap ? "Einmal kurz auf den Bildschirm tippen – dann hört das Mikro zu" : audioStuck() ? "Kein Ton? Einmal kurz auf den Bildschirm tippen" : lungs > .05 && breathState !== "blow" && breathState !== "draw" ? "Reinpusten zum Ausatmen" : "");
+  setCue(micNeedTap ? "Einmal kurz auf den Bildschirm tippen – dann hört das Mikro zu" : audioStuck() ? "Kein Ton? Einmal kurz auf den Bildschirm tippen" : drawCount === 0 && noDrawT > 7 ? "Hörbar am Filter ziehen – das Mikro sitzt unten am Handy" : lungs > .05 && breathState !== "blow" && breathState !== "draw" ? "Reinpusten zum Ausatmen" : "");
   if (micHud) $("micHud").textContent =
-    `${{ idle: "Ruhe", draw: "Ziehen", blow: "Pusten" }[breathState]} · Schwerpunkt ${(centroid / 1000).toFixed(1)} kHz · tief ${micLo | 0} dB / hoch ${micHi | 0} dB · Puste-Wert ${blowScore.toFixed(2)} · Lunge ${lungs.toFixed(1)} · Audio ${ac.state} ${ac.sampleRate} · Spitze ${micPeak | 0} dB · Züge ${drawCount} · Video ${trip.on ? (trip.still ? "Standbild" : "läuft") : trip.played ? "war dran" : "wartet"} · Zippo-Test ${micTest ? (micTest.t0 ? "läuft" : micTest.ok ? "gehört" : "nichts gehört") : "–"} · Kopplung ${cplDb ? Array.from(cplDb, v => v | 0).join("/") : "–"}`;
+    `${{ idle: "Ruhe", draw: "Ziehen", blow: "Pusten" }[breathState]} · Schwerpunkt ${(centroid / 1000).toFixed(1)} kHz · tief ${micLo | 0} dB / hoch ${micHi | 0} dB · Schwelle ${thr.toFixed(0)} dB · Puste-Wert ${blowScore.toFixed(2)} · Lunge ${lungs.toFixed(1)} · Audio ${ac.state} ${ac.sampleRate} · Spitze ${micPeak | 0} dB · Züge ${drawCount} · Video ${trip.on ? (trip.still ? "Standbild" : "läuft") : trip.played ? "war dran" : "wartet"} · Zippo-Test ${micTest ? (micTest.t0 ? "läuft" : micTest.ok ? "gehört" : "nichts gehört") : "–"} · Kopplung ${cplDb ? Array.from(cplDb, v => v | 0).join("/") : "–"}`;
 }
 
 // Klopfen auf den Rahmen = Ruck im Beschleunigungssensor; Empfindlichkeit wird beim Anzünden festgelegt
