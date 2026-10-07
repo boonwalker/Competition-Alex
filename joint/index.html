@@ -1799,7 +1799,7 @@ function drawStrength(dt) {
   if (mode === "breath" && micAna && ac) {
     readMic(dt, false);
     const hi = bandPower(1500, 9000), lo = bandPower(40, 400), tot = hi + lo + bandPower(400, 1500);
-    const thr = 13 - sensUp, db = 10 * Math.log10(Math.max(hi, 1e-12) / micFloor);
+    const thr = MIC_THR - sensUp + fbPen, db = 10 * Math.log10(Math.max(hi, 1e-12) / micFloor);
     micFloor = hi < micFloor ? micFloor + (hi - micFloor) * .05 : micFloor;   // Grundrauschen nur nach unten nachführen
     return Math.max(finger, clamp((db - thr) / 16, 0, 1.2));
   }
@@ -2519,7 +2519,9 @@ function stopMic() {
 //  Ziehen  = helles Zischen (Schwerpunkt hoch, wenig Tiefen)  -> Joint brennt, Rauch sammelt sich in der Lunge
 //  Pusten  = Wind-Rumpeln am Mikro (Schwerpunkt tief)          -> Ausatmen, solange Rauch in der Lunge ist
 // Beliebig viele Züge hintereinander sind möglich, ausgeatmet wird erst beim Pusten.
-let noDrawT = 0, sensUp = 0;
+// Grundschwelle in dB über dem Grundrauschen (höher = unempfindlicher). fbPen: Aufschlag nach erkannter Musik-Rückkopplung
+const MIC_THR = 16;
+let noDrawT = 0, sensUp = 0, fbPen = 0;
 let breathState = "idle", micLo = 0, micHi = 0, micTot = 0, loFloor = 1e-7, totFloor = 1e-7, micBlow = 0;
 let evStart = 0, lungsBefore = 0, micOnSince = 0, micPrevSig = false, lungs = 0, lungsAt = 0, blowScore = .5, centroid = 0, lastBxBreath = 0, micHud = false;
 function setCue(t) { $("cue").hidden = !t; $("cue").textContent = t || ""; }
@@ -2542,15 +2544,16 @@ function breathStep(dt) {
 
   // Schwelle über dem Grundrauschen. Hört das Mikro nach dem Anzünden lange keinen Zug, wird es nach und nach empfindlicher
   // (leise Atmer, leise Mikros); löst Dauerlärm Fehlalarm aus, wird es wieder unempfindlicher.
-  if (state === "lit" && breathState === "idle" && pid === null) { noDrawT += dt; if (noDrawT > 5) sensUp = Math.min(7, Math.max(sensUp, (noDrawT - 5) * .6)); }
-  const thr = 13 - sensUp;
+  if (state === "lit" && breathState === "idle" && pid === null) { noDrawT += dt; if (noDrawT > 8) sensUp = Math.min(4, Math.max(sensUp, (noDrawT - 8) * .4)); }
+  fbPen = Math.max(0, fbPen - dt * .05);
+  const thr = MIC_THR - sensUp + fbPen;
   if (breathState === "idle") { micFloor = track(micFloor, hi, dt); loFloor = track(loFloor, lo, dt); totFloor = track(totFloor, tot, dt); }
   micHi = 10 * Math.log10(hi / micFloor); micLo = 10 * Math.log10(lo / loFloor); micTot = 10 * Math.log10(tot / totFloor);
   micDb = Math.max(micHi, micLo, micTot);
   // Was der Lautsprecher beisteuert, ist schon abgezogen; tiefe Bänder brauchen trotzdem mehr Abstand (Raumhall, Handgeräusche)
   // Läuft Musik, zusätzlich 6 dB mehr verlangen: Verzerrungen des Handy-Lautsprechers lassen sich nicht ganz herausrechnen
   // mit Hysterese: ein laufender Zug darf etwas leiser werden, ohne abzureißen
-  const onThr = thr + (mGate ? 3 : 0), hiThr = breathState === "draw" ? onThr - 3 : onThr;
+  const onThr = thr + (mGate ? 5 : 0), hiThr = breathState === "draw" ? onThr - 3 : onThr;
   const sig = micHi > hiThr || micDb > onThr + 10;
   const now = performance.now();
   const wasSilent = !micPrevSig && now - micLastOn > 120; micPrevSig = sig;
@@ -2577,8 +2580,10 @@ function breathStep(dt) {
     }
   } else if (breathState === "draw") {
     lungs += Math.max(0, lastBxBreath - bx) / (L * .08); lastBxBreath = bx; lungsAt = now;
-    if (silentFor > 300) { drawing = false; breathState = "idle"; if (drawFrom - bx > r1 * .15) totalDrags++; drawEnded(); }
-    else if (now - evStart > 6000) {
+    if (silentFor > 300) { drawing = false; breathState = "idle"; if (drawFrom - bx > r1 * .15) totalDrags++; drawEnded(); sensUp = Math.max(0, sensUp - 1); }
+    else if (now - evStart > (mGate ? 4500 : 6000)) {
+      // ein so langer Zug bei laufender Musik ist fast immer Rückkopplung: abbrechen und ab jetzt unempfindlicher
+      if (mGate) fbPen = Math.min(8, fbPen + 3);
       // so lange zieht niemand: das ist Dauerlärm, als neues Grundrauschen übernehmen
       drawing = false; breathState = "idle"; micFloor = hi; loFloor = lo; totFloor = tot; sensUp = Math.max(0, sensUp - 3);
     }
