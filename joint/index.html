@@ -807,7 +807,7 @@ function musicTone(now) {
   const [f, g] = { full: [20000, 1], quiet: [1800, 1], world: [1100, .7], video: [1800, .7] }[tone], t = ac.currentTime, tc = now === true ? .001 : .25;
   // beim Ziehen (Mikro an): nur über den Lautsprecher fern vom Mikro, dafür etwas lauter
   const away = tone === "quiet" && quietPan !== 0 && cPan;
-  cToneGain = tone === "quiet" ? g * Math.pow(10, -fbAtten / 20) * (away ? 1.5 : 1) : g;
+  cToneGain = tone === "quiet" ? g * Math.pow(10, -fbAtten / 20) * (away ? 1.3 : 1) : g;
   if (cPan) { cPan.pan.cancelScheduledValues(t); cPan.pan.setTargetAtTime(away ? quietPan : 0, t, tc); }
   // mit Mikro steil (48 dB/Oktave) über ~2 kHz abschneiden: klingt voll, aber oberhalb von 3 kHz, wo das Mikro auf Atem hört, ist Ruhe
   for (const n of [cFilter, cFilter2, cFilter3, cFilter4]) { n.frequency.cancelScheduledValues(t); n.frequency.setTargetAtTime(f, t, tc); }
@@ -2750,7 +2750,8 @@ function stopMic() {
 // Beliebig viele Züge hintereinander sind möglich, ausgeatmet wird erst beim Pusten.
 // Spektrale Glätte in Teilbändern (0 = einzelne Töne, ~0,5 = Rauschen); Teilbänder gleichen die Neigung des Spektrums aus
 let hpAna = null, hpBuf = null, hpFloor = 1e-9, hiFloor3 = 1e-9;
-let dropFrames = 0, zugSigT = 0, lastQuietT = 0;
+let dropFrames = 0, zugSigT = 0, lastQuietT = 0, musicLeak = 0, hpRelLast = -99;
+const hpRelNow = () => hpRelLast;
 let gap = null, lastGap = 0, drawLvl = [], rawS = -200, refHiDb = -200, musicOffAt = -1e9, envM = [], envR = [];
 // größte Korrelation zwischen Mikro- und Musik-Hüllkurve über ~0,5 s, bei 0–200 ms Laufzeit
 function musicCorr() {
@@ -2767,7 +2768,7 @@ function musicCorr() {
   return best;
 }
 // Grundschwelle in dB über dem Grundrauschen (höher = unempfindlicher). fbPen: Aufschlag nach erkannter Musik-Rückkopplung
-const MIC_THR = 16;
+const MIC_THR = 18;
 let noDrawT = 0, sensUp = 0, fbPen = 0;
 let breathState = "idle", micLo = 0, micHi = 0, micTot = 0, loFloor = 1e-7, totFloor = 1e-7, micBlow = 0;
 let evStart = 0, lungsBefore = 0, micOnSince = 0, micPrevSig = false, lungs = 0, lungsAt = 0, blowScore = .5, centroid = 0, lastBxBreath = 0, micHud = false;
@@ -2797,8 +2798,9 @@ function breathStep(dt) {
 
   // Schwelle über dem Grundrauschen. Hört das Mikro nach dem Anzünden lange keinen Zug, wird es nach und nach empfindlicher
   // (leise Atmer, leise Mikros); löst Dauerlärm Fehlalarm aus, wird es wieder unempfindlicher.
-  if (state === "lit" && breathState === "idle" && pid === null) { noDrawT += dt; if (noDrawT > 8) sensUp = Math.min(4, Math.max(sensUp, (noDrawT - 8) * .4)); }
+  if (state === "lit" && breathState === "idle" && pid === null) { noDrawT += dt; if (noDrawT > 10) sensUp = Math.min(2, Math.max(sensUp, (noDrawT - 10) * .3)); }
   fbPen = Math.max(0, fbPen - dt * .05);
+  musicLeak = Math.max(0, musicLeak - dt * .03);
   if (fbAtten > 0 && !mGate) { const o = fbAtten; fbAtten = Math.max(0, fbAtten - dt * .05); if ((o | 0) !== (fbAtten | 0)) cTone = ""; }
   const thr = MIC_THR - sensUp + fbPen;
   // Grundrauschen nur nachführen, wenn der Lautsprecher still ist – sonst verfälscht das Herausrechnen der Musik die Messung
@@ -2809,17 +2811,18 @@ function breathStep(dt) {
   // Was der Lautsprecher beisteuert, ist schon abgezogen; tiefe Bänder brauchen trotzdem mehr Abstand (Raumhall, Handgeräusche)
   // Läuft Musik, zusätzlich 6 dB mehr verlangen: Verzerrungen des Handy-Lautsprechers lassen sich nicht ganz herausrechnen
   // mit Hysterese: ein laufender Zug darf etwas leiser werden, ohne abzureißen
-  const onThr = thr + (mGate ? 5 : 0), hiThr = breathState === "draw" ? onThr - 5 : onThr;   // ein laufender Zug reißt nicht so leicht ab
+  const onThr = thr + (mGate ? 7 : 0), hiThr = breathState === "draw" ? onThr - 3 : onThr;   // ein laufender Zug reißt nicht so leicht ab
   const now = performance.now();
   // Läuft Musik, hört das Mikro nur oberhalb von 4,5 kHz hin: dort ist Atem laut, die (steil gefilterte) Musik praktisch weg
   const hiM = mGate ? 10 * Math.log10(bandPower(4500, 10000) / Math.max(hiFloor3, 1e-12)) : micHi;
-  const hiOn = hiM > hiThr;
+  // Musik-Echo auf diesem Handy schon einmal erkannt: dann zählt nur Atem, der deutlich lauter ist als das Echo damals
+  const hiOn = hiM > hiThr && (!mGate || hpRelNow() > musicLeak + 3);
   let sig = mGate ? hiOn : hiOn || micDb > onThr + 10;
   // schneller Hochton-Pegel (ungefiltert, ungeglättet)
   let hpDb = -200;
   if (hpAna) { hpAna.getFloatTimeDomainData(hpBuf); let q = 0; for (let i = 0; i < hpBuf.length; i++) q += hpBuf[i] * hpBuf[i]; hpDb = 10 * Math.log10(q / hpBuf.length + 1e-30); }
   if (breathState === "idle" && spkQuiet) { hpFloor = track(hpFloor, Math.pow(10, hpDb / 10), dt); hiFloor3 = track(hiFloor3, bandPower(4500, 10000), dt); }
-  const hpRel = hpDb - 10 * Math.log10(hpFloor);
+  const hpRel = hpDb - 10 * Math.log10(hpFloor); hpRelLast = hpRel;
   // Pegelverlauf des Zugs: fällt er deutlich unter sein bisheriges Niveau, hat man vermutlich aufgehört -> sofort prüfen
   if (breathState === "draw" && !gap) { drawLvl.push(hpRel); if (drawLvl.length > 60) drawLvl.shift(); } else if (breathState !== "draw") drawLvl = [];
   const lvlRef = drawLvl.length > 10 ? drawLvl.slice().sort((x, y) => x - y)[Math.floor(drawLvl.length * .6)] : hpRel;
@@ -2841,6 +2844,7 @@ function breathStep(dt) {
     if (el > gap.lat + 150) {
       musicDuck(false);
       if (gap.n >= 2 && (gap.min < hiThr || gap.pre - gap.min > 14) && breathState === "draw") {
+        musicLeak = clamp(Math.max(musicLeak, gap.preMin - 3), 0, 24);   // so laut kommt die Musik hier beim Mikro an (leisester Moment davor)
         drawing = false; breathState = "idle"; drawEnded(); fbPen = Math.min(8, fbPen + 2); sig = false; micLastOn = 0;
         if (zugCounted && zugByThis) { drawCount = Math.max(0, drawCount - 1); zugCounted = false; }   // war Musik-Echo, kein Zug
         feedbackSeen();
@@ -2848,12 +2852,12 @@ function breathStep(dt) {
       gap = null; lastGap = now;
     } else if (breathState === "draw") sig = true;   // während der Lücke den Zug nicht abreißen lassen
   } else if (mGate && breathState === "draw" && cOut && now - evStart > 500 && now - lastQuietT > 350 &&
-             ((bigDrop && now - lastGap > 600) || now - Math.max(lastGap, evStart) > 4000)) {
+             ((bigDrop && now - lastGap > 600) || now - Math.max(lastGap, evStart) > 3000)) {
     // Die Musik soll beim Ziehen durchlaufen: nur prüfen, wenn der Pegel deutlich abfällt (typisch fürs Aufhören –
     // die Musik endet dann ohnehin) oder ein Zug mit Musik ungewöhnlich lange dauert
     const lat = ((ac.outputLatency || 0) + (ac.baseLatency || 0)) * 1000;
     const recent = drawLvl.slice(-10).sort((x, y) => x - y);
-    gap = { t0: now, lat: clamp(lat, 30, 250), n: 0, min: 999, pre: recent.length ? recent[recent.length >> 1] : hpRel }; musicDuck(true);
+    gap = { t0: now, lat: clamp(lat, 30, 250), n: 0, min: 999, pre: recent.length ? recent[recent.length >> 1] : hpRel, preMin: recent.length ? recent[0] : hpRel }; musicDuck(true);
   }
   if (window.__dbg) window.__dbg.push([now | 0, breathState, micHi | 0, hpRel | 0, hiThr | 0, +(dropped ? 1 : corr).toFixed(2), mGate ? 1 : 0, gap ? 1 : 0, sig ? 1 : 0]);
   if (breathState === "draw" && sig && !gap) zugSigT += dt;
@@ -2885,7 +2889,7 @@ function breathStep(dt) {
     if (silentFor > 650) { drawing = false; breathState = "idle"; lastDrawEnd = now; if (drawFrom - bx > r1 * .15) totalDrags++; drawEnded(); sensUp = Math.max(0, sensUp - 1); }
     else if (now - evStart > (mGate ? 7000 : 6000)) {
       // ein so langer Zug bei laufender Musik ist fast immer Rückkopplung: abbrechen und ab jetzt unempfindlicher
-      if (mGate) { fbPen = Math.min(8, fbPen + 3); feedbackSeen(); if (zugCounted && zugByThis) { drawCount = Math.max(0, drawCount - 1); zugCounted = false; } }
+      if (mGate) { fbPen = Math.min(8, fbPen + 3); feedbackSeen(); if (drawLvl.length) musicLeak = clamp(Math.max(musicLeak, drawLvl.slice().sort((x, y) => x - y)[drawLvl.length >> 2] - 3), 0, 24); if (zugCounted && zugByThis) { drawCount = Math.max(0, drawCount - 1); zugCounted = false; } }
       // so lange zieht niemand: das ist Dauerlärm, als neues Grundrauschen übernehmen
       drawing = false; breathState = "idle"; sensUp = Math.max(0, sensUp - 3);
       if (!mGate) { micFloor = hi / 4; loFloor = lo / 4; totFloor = tot / 4; }   // echter Dauerlärm: Grundrauschen knapp darunter neu ansetzen
@@ -2905,7 +2909,7 @@ function breathStep(dt) {
   if (lungs > 0 && now - lungsAt > 25000) lungs = 0;   // zu lange angehalten: Rauch ist weg
   setCue(micNeedTap ? "Einmal kurz auf den Bildschirm tippen – dann hört das Mikro zu" : audioStuck() ? "Kein Ton? Einmal kurz auf den Bildschirm tippen" : drawCount === 0 && noDrawT > 7 ? "Hörbar am Filter ziehen – das Mikro sitzt unten am Handy" : lungs > .05 && breathState !== "blow" && breathState !== "draw" ? "Reinpusten zum Ausatmen" : "");
   if (micHud) $("micHud").textContent =
-    `${{ idle: "Ruhe", draw: "Ziehen", blow: "Pusten" }[breathState]} · Schwerpunkt ${(centroid / 1000).toFixed(1)} kHz · tief ${micLo | 0} dB / hoch ${micHi | 0} dB · Schwelle ${thr.toFixed(0)} dB · Puste-Wert ${blowScore.toFixed(2)} · Lunge ${lungs.toFixed(1)} · Audio ${ac.state} ${ac.sampleRate} · Spitze ${micPeak | 0} dB · Züge ${drawCount} · Videos ${TRIPS.map(c => c.played ? "✓" : "–").join("")}${trip.on ? (trip.still ? " Standbild" : " läuft") : ""} · Zippo-Test ${micTest ? (micTest.t0 ? "läuft" : micTest.ok ? "gehört" : "nichts gehört") : "–"} · Kanal ${quietPan ? (quietPan < 0 ? "links" : "rechts") : "beide"} (${chanDiff.toFixed(1)} dB) · Musik −${fbAtten.toFixed(0)} dB · Kopplung ${cplDb ? Array.from(cplDb, v => v | 0).join("/") : "–"}`;
+    `${{ idle: "Ruhe", draw: "Ziehen", blow: "Pusten" }[breathState]} · Schwerpunkt ${(centroid / 1000).toFixed(1)} kHz · tief ${micLo | 0} dB / hoch ${micHi | 0} dB · Schwelle ${thr.toFixed(0)} dB · Puste-Wert ${blowScore.toFixed(2)} · Lunge ${lungs.toFixed(1)} · Audio ${ac.state} ${ac.sampleRate} · Spitze ${micPeak | 0} dB · Züge ${drawCount} · Videos ${TRIPS.map(c => c.played ? "✓" : "–").join("")}${trip.on ? (trip.still ? " Standbild" : " läuft") : ""} · Zippo-Test ${micTest ? (micTest.t0 ? "läuft" : micTest.ok ? "gehört" : "nichts gehört") : "–"} · Kanal ${quietPan ? (quietPan < 0 ? "links" : "rechts") : "beide"} (${chanDiff.toFixed(1)} dB) · Musik −${fbAtten.toFixed(0)} dB · Echo ${musicLeak.toFixed(0)} dB · Kopplung ${cplDb ? Array.from(cplDb, v => v | 0).join("/") : "–"}`;
 }
 
 // Klopfen auf den Rahmen = Ruck im Beschleunigungssensor; Empfindlichkeit wird beim Anzünden festgelegt
