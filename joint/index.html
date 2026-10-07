@@ -769,7 +769,7 @@ function customStart() {
   cGain = ac.createGain(); cGain.connect(cIn);
   const now = ac.currentTime;
   cGain.gain.setValueAtTime(0, now); cGain.gain.linearRampToValueAtTime(customNorm, now + .03);
-  playSnippet(now);
+  playSnippet(now, true);
 }
 // Klangfarbe der Musik: normal laut und hell; mit Mikro leiser und dumpf; in der Glutwelt gedämpft im Hintergrund
 let cIn = null, cFilter2 = null, cFilter3 = null, cFilter4 = null, cOut = null, cTone = "";
@@ -778,34 +778,42 @@ let cToneGain = 1;
 function musicDuck(on) {
   if (!cOut || cAc !== ac) return;
   const t = ac.currentTime; cOut.gain.cancelScheduledValues(t);
-  cOut.gain.setTargetAtTime(on ? 0 : cToneGain, t, on ? .006 : .025);
+  cOut.gain.setTargetAtTime(on ? cToneGain * .125 : cToneGain, t, on ? .012 : .04);   // nur eine kurze Senke (-18 dB), keine Pause
 }
 function musicTone(now) {
   if (!cOut || cAc !== ac) return;
   const tone = state === "dive" ? "world" : trip.on ? "video" : musicQuiet() ? "quiet" : "full";
   if (tone === cTone) return;
   cTone = tone;
-  const [f, g] = { full: [20000, 1], quiet: [2000, 1], world: [1100, .7], video: [1800, .7] }[tone], t = ac.currentTime, tc = now === true ? .001 : .25;
+  const [f, g] = { full: [20000, 1], quiet: [1800, 1], world: [1100, .7], video: [1800, .7] }[tone], t = ac.currentTime, tc = now === true ? .001 : .25;
   cToneGain = g;
   // mit Mikro steil (48 dB/Oktave) über ~2 kHz abschneiden: klingt voll, aber oberhalb von 3 kHz, wo das Mikro auf Atem hört, ist Ruhe
   for (const n of [cFilter, cFilter2, cFilter3, cFilter4]) { n.frequency.cancelScheduledValues(t); n.frequency.setTargetAtTime(f, t, tc); }
   cOut.gain.cancelScheduledValues(t); cOut.gain.setTargetAtTime(g, t, tc);
 }
-function playSnippet(when) {
-  const n = Math.max(1, Math.ceil(customBuf.duration / SNIP));
-  let i = Math.floor(Math.random() * n); if (n > 1 && i === lastSnip) i = (i + 1 + Math.floor(Math.random() * (n - 1))) % n;
-  lastSnip = i;
-  const off = i * SNIP, len = Math.min(SNIP, customBuf.duration - off);
+// Setzt die Musik kurz nach dem Verstummen wieder ein (neuer Zug, kurzer Aussetzer), läuft sie an derselben Stelle weiter
+// statt mit einem neuen Schnipsel – sonst klingt es zerhackt
+let cResume = null, cPlay = null;
+function playSnippet(when, allowResume) {
+  let off, end;
+  if (allowResume && cResume && performance.now() - cResume.at < 3000 && cResume.pos < cResume.end - .4) { off = cResume.pos; end = cResume.end; }
+  else {
+    const n = Math.max(1, Math.ceil(customBuf.duration / SNIP));
+    let i = Math.floor(Math.random() * n); if (n > 1 && i === lastSnip) i = (i + 1 + Math.floor(Math.random() * (n - 1))) % n;
+    lastSnip = i; off = i * SNIP; end = Math.min(customBuf.duration, off + SNIP);
+  }
+  cResume = null;
   const src = ac.createBufferSource(); src.buffer = customBuf; src.connect(cGain);
-  src.start(when, off, len);
+  src.start(when, off, end - off);
   src.onended = () => { if (cSrc === src && mGate) playSnippet(ac.currentTime); };   // länger gezogen: nächster zufälliger Schnipsel
-  cSrc = src;
+  cSrc = src; cPlay = { t0: when, off, end };
 }
 function customStop() {
   if (!cGain) return;
   const now = ac.currentTime, g = cGain, s0 = cSrc;
   g.gain.cancelScheduledValues(now); g.gain.setValueAtTime(g.gain.value, now); g.gain.linearRampToValueAtTime(0, now + .03);   // sofort, aber ohne Knacken
   cSrc = null; cGain = null;
+  if (s0 && cPlay) cResume = { pos: cPlay.off + Math.max(0, now - cPlay.t0), end: cPlay.end, at: performance.now() };
   if (s0) { s0.onended = null; try { s0.stop(now + .05); } catch (e) {} }
 }
 
@@ -2422,7 +2430,7 @@ function connectMic() {
   micBins = new Float32Array(micAna.frequencyBinCount).fill(-160);
   micSrc.connect(micAna);
   // schneller Hochton-Kanal ohne Glättung: für die Hörlücke (kurze Musikpause) und den Pegelverlauf beim Ziehen
-  const h1 = ac.createBiquadFilter(), h2 = ac.createBiquadFilter(); h1.type = h2.type = "highpass"; h1.frequency.value = h2.frequency.value = 3000;
+  const h1 = ac.createBiquadFilter(), h2 = ac.createBiquadFilter(); h1.type = h2.type = "highpass"; h1.frequency.value = h2.frequency.value = 4500;
   hpAna = ac.createAnalyser(); hpAna.fftSize = 512; hpAna.smoothingTimeConstant = 0; hpBuf = new Float32Array(hpAna.fftSize);
   micSrc.connect(h1).connect(h2).connect(hpAna); hpFloor = 1e-5; hiFloor3 = 1e-7;   // hoch starten: das Grundrauschen wird schnell nach unten nachgeführt
   mGate = false; cGain = null; cSrc = null;
@@ -2687,22 +2695,22 @@ function breathStep(dt) {
   // Was der Lautsprecher beisteuert, ist schon abgezogen; tiefe Bänder brauchen trotzdem mehr Abstand (Raumhall, Handgeräusche)
   // Läuft Musik, zusätzlich 6 dB mehr verlangen: Verzerrungen des Handy-Lautsprechers lassen sich nicht ganz herausrechnen
   // mit Hysterese: ein laufender Zug darf etwas leiser werden, ohne abzureißen
-  const onThr = thr + (mGate ? 5 : 0), hiThr = breathState === "draw" ? onThr - 3 : onThr;
+  const onThr = thr + (mGate ? 5 : 0), hiThr = breathState === "draw" ? onThr - 5 : onThr;   // ein laufender Zug reißt nicht so leicht ab
   const now = performance.now();
-  // Läuft Musik, hört das Mikro nur oberhalb von 3 kHz hin: dort ist Atem laut, die (steil gefilterte) Musik kaum vorhanden
-  const hiM = mGate ? 10 * Math.log10(bandPower(3000, 9000) / Math.max(hiFloor3, 1e-12)) : micHi;
+  // Läuft Musik, hört das Mikro nur oberhalb von 4,5 kHz hin: dort ist Atem laut, die (steil gefilterte) Musik praktisch weg
+  const hiM = mGate ? 10 * Math.log10(bandPower(4500, 10000) / Math.max(hiFloor3, 1e-12)) : micHi;
   const hiOn = hiM > hiThr;
   let sig = mGate ? hiOn : hiOn || micDb > onThr + 10;
   // schneller Hochton-Pegel (ungefiltert, ungeglättet)
   let hpDb = -200;
   if (hpAna) { hpAna.getFloatTimeDomainData(hpBuf); let q = 0; for (let i = 0; i < hpBuf.length; i++) q += hpBuf[i] * hpBuf[i]; hpDb = 10 * Math.log10(q / hpBuf.length + 1e-30); }
-  if (breathState === "idle" && spkQuiet) { hpFloor = track(hpFloor, Math.pow(10, hpDb / 10), dt); hiFloor3 = track(hiFloor3, bandPower(3000, 9000), dt); }
+  if (breathState === "idle" && spkQuiet) { hpFloor = track(hpFloor, Math.pow(10, hpDb / 10), dt); hiFloor3 = track(hiFloor3, bandPower(4500, 10000), dt); }
   const hpRel = hpDb - 10 * Math.log10(hpFloor);
   // Pegelverlauf des Zugs: fällt er deutlich unter sein bisheriges Niveau, hat man vermutlich aufgehört -> sofort prüfen
   if (breathState === "draw" && !gap) { drawLvl.push(hpRel); if (drawLvl.length > 60) drawLvl.shift(); } else if (breathState !== "draw") drawLvl = [];
   const lvlRef = drawLvl.length > 10 ? drawLvl.slice().sort((x, y) => x - y)[Math.floor(drawLvl.length * .6)] : hpRel;
   rawS += (hpRel - rawS) * Math.min(1, dt * 15);
-  const dropped = drawLvl.length > 10 && rawS < lvlRef - 4;
+  const dropped = drawLvl.length > 10 && rawS < lvlRef - 6, bigDrop = drawLvl.length > 10 && rawS < lvlRef - 10;
   // folgt der Hochton-Pegel dem Lautstärkeverlauf der gespielten Musik, hört das Mikro vermutlich die Musik
   if (mGate && breathState === "draw" && !gap) { envM.push(hpDb); envR.push(refHiDb); if (envM.length > 48) { envM.shift(); envR.shift(); } }
   else if (breathState !== "draw") { envM = []; envR = []; }
@@ -2711,18 +2719,21 @@ function breathStep(dt) {
   if (gap) {
     const el = now - gap.t0;
     // Ausgabe- plus Eingangs-Verzögerung abwarten (die Eingangsseite meldet der Browser nicht), dann ~80 ms lauschen
-    if (el > gap.lat + 80 && el < gap.lat + 165) { gap.n++; if (hpRel < hiThr) gap.quiet++; }
-    if (el > gap.lat + 170) {
+    // folgt der Mikro-Pegel der Senke (fällt er um mehr als 14 dB) oder wird es still, war es die Musik
+    if (el > gap.lat + 70 && el < gap.lat + 145) { gap.n++; gap.min = Math.min(gap.min, hpRel); }
+    if (el > gap.lat + 150) {
       musicDuck(false);
-      if (gap.n >= 2 && gap.quiet >= 1 && breathState === "draw") {
+      if (gap.n >= 2 && (gap.min < hiThr || gap.pre - gap.min > 14) && breathState === "draw") {
         drawing = false; breathState = "idle"; drawEnded(); fbPen = Math.min(8, fbPen + 2); sig = false; micLastOn = 0;
       }
       gap = null; lastGap = now;
     } else if (breathState === "draw") sig = true;   // während der Lücke den Zug nicht abreißen lassen
-  } else if (mGate && breathState === "draw" && cOut && now - lastGap > 600 && now - evStart > 400 &&
-             (dropped || corr > .6 || now - Math.max(lastGap, evStart) > 1300)) {
+  } else if (mGate && breathState === "draw" && cOut && now - evStart > 500 &&
+             ((bigDrop && now - lastGap > 350) || (now - lastGap > 800 && (dropped || now - Math.max(lastGap, evStart + 300) > 900)))) {
+    // selten prüfen: sofort bei deutlichem Pegelabfall (typisch fürs Aufhören – die Musik endet dann ohnehin), sonst etwa alle 2 s
     const lat = ((ac.outputLatency || 0) + (ac.baseLatency || 0)) * 1000;
-    gap = { t0: now, lat: clamp(lat, 30, 250), n: 0, quiet: 0 }; musicDuck(true);
+    const recent = drawLvl.slice(-10).sort((x, y) => x - y);
+    gap = { t0: now, lat: clamp(lat, 30, 250), n: 0, min: 999, pre: recent.length ? recent[recent.length >> 1] : hpRel }; musicDuck(true);
   }
   if (window.__dbg) window.__dbg.push([now | 0, breathState, micHi | 0, hpRel | 0, hiThr | 0, +(dropped ? 1 : corr).toFixed(2), mGate ? 1 : 0, gap ? 1 : 0, sig ? 1 : 0]);
   const wasSilent = !micPrevSig && now - micLastOn > 120; micPrevSig = sig;
@@ -2749,7 +2760,7 @@ function breathStep(dt) {
     }
   } else if (breathState === "draw") {
     lungs += Math.max(0, lastBxBreath - bx) / (L * .08); lastBxBreath = bx; lungsAt = now;
-    if (silentFor > 300) { drawing = false; breathState = "idle"; if (drawFrom - bx > r1 * .15) totalDrags++; drawEnded(); sensUp = Math.max(0, sensUp - 1); }
+    if (silentFor > 420) { drawing = false; breathState = "idle"; if (drawFrom - bx > r1 * .15) totalDrags++; drawEnded(); sensUp = Math.max(0, sensUp - 1); }
     else if (now - evStart > (mGate ? 4500 : 6000)) {
       // ein so langer Zug bei laufender Musik ist fast immer Rückkopplung: abbrechen und ab jetzt unempfindlicher
       if (mGate) fbPen = Math.min(8, fbPen + 3);
