@@ -1456,7 +1456,7 @@ function render(t) {
 }
 // Noch kein Zug 3 s nach dem Anzünden: "Nimm nen kräftigen Zug!" mit gekrümmtem Pfeil, der sich aufbaut und
 // mehrfach genau auf das Mikrofon am Filterende zeigt; das Ganze pulsiert leicht
-let pullHintT = 0, pullHintA = 0, pullHintDone = false, worldVisited = false, autoWorldDone = false;
+let burnFxUntil = 0, pullHintT = 0, pullHintA = 0, pullHintDone = false, worldVisited = false, autoWorldDone = false;
 function drawPullHint(t) {
   if (pullHintA < .01) return;
   const a = pullHintA, fs = Math.min(W, H) * .1, f = frameM.transformPoint(new DOMPoint(x0 + r1 * .3, 0));
@@ -1487,10 +1487,6 @@ function drawPullHint(t) {
     ctx.beginPath(); ctx.moveTo(hx + dx * hs * .55, hy + dy * hs * .55); ctx.lineTo(hx - dx * hs * .5 - dy * hs * .55, hy - dy * hs * .5 + dx * hs * .55); ctx.lineTo(hx - dx * hs * .5 + dy * hs * .55, hy - dy * hs * .5 - dx * hs * .55); ctx.closePath();
     ctx.fillStyle = "#ffd23a"; ctx.strokeStyle = "#2a0c05"; ctx.lineWidth = fs * .08; ctx.fill(); ctx.stroke();
   }
-  // Zielpunkt am Mikrofon: kleine Glutringe
-  ctx.globalCompositeOperation = "lighter";
-  for (let k = 0; k < 2; k++) { const q = (ph * 2 + k * .5) % 1; ctx.strokeStyle = `rgba(255,170,60,${(1 - q) * .7 * a})`; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(tx, ty, 8 + q * 34, 0, 7); ctx.stroke(); }
-  ctx.globalCompositeOperation = "source-over";
   // Text als Comic-Ruf (wie in der Glutwelt), pulsierend
   ctx.globalAlpha = a; ctx.translate(cx, cy); ctx.rotate(-.05 + Math.sin(t * 2.1) * .015); ctx.scale(fit * pulse, fit * pulse);
   ctx.textAlign = "center"; ctx.textBaseline = "middle";
@@ -1532,6 +1528,11 @@ function update(dt, t) {
     lightT += dt;
     if (mode === "breath") breathStep(dt);   // Grundrauschen und Lautsprecher-Kopplung schon beim Anzünden einmessen
     if (lightT >= Z.strike && lightT - dt < Z.strike) zippoSparks();
+    // Flamme aus: der Joint brennt jetzt – kurz das Abbrenngeräusch (Knistern und Zischen) einspielen
+    if (lightT >= Z.off && lightT - dt < Z.off && ac) {
+      burnFxUntil = performance.now() + 1500;
+      crackleGain.gain.setTargetAtTime(.55, ac.currentTime, .05); hissGain.gain.setTargetAtTime(.045, ac.currentTime, .08);
+    }
     heat = clamp((lightT - Z.catchT) * .6, 0, .6);
     if (lightT > Z.catchT + .1 && bx > burnStart - R * .4) bx -= dt * R * .5;
     if (lightT > Z.lit) state = "lit";
@@ -1568,9 +1569,10 @@ function update(dt, t) {
     if (ac) {
       // Knistern und Zischen der Glut beim Ziehen (wie in den ersten Entwürfen) – auch im Atem-Modus.
       // Im Atem-Modus ohne Ziehen still, damit das Mikro in Ruhe nichts Falsches hört.
-      const burning = drawing || fingerBurning();
-      crackleGain.gain.setTargetAtTime(burning ? .55 : mode === "breath" ? 0 : .04, ac.currentTime, .08);
-      hissGain.gain.setTargetAtTime(burning ? .045 : 0, ac.currentTime, .12);
+      const fx = performance.now() < burnFxUntil, burning = drawing || fingerBurning() || fx;
+      const tc = !burning && performance.now() - burnFxUntil < 600 ? .3 : .08;   // nach dem Anzünd-Knistern weich ausklingen
+      crackleGain.gain.setTargetAtTime(burning ? .55 : mode === "breath" ? 0 : .04, ac.currentTime, tc);
+      hissGain.gain.setTargetAtTime(burning ? .045 : 0, ac.currentTime, tc * 1.5);
       if (burnPan) { const pv = mode === "breath" && micStream ? quietPan : 0; if (burnPan.pan.value !== pv) burnPan.pan.setTargetAtTime(pv, ac.currentTime, .05); }
     }
   }
