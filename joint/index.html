@@ -74,7 +74,10 @@ button:focus-visible { outline: 2px solid var(--ember); outline-offset: 3px; }
 <canvas id="c"></canvas>
 
 <div class="cue" id="cue" hidden></div>
-<div class="trip" id="trip" hidden><video id="tripVid" src="strand.mp4" poster="strand.jpg" muted playsinline webkit-playsinline preload="auto" disablepictureinpicture></video></div>
+<div class="trip" id="trip" hidden>
+  <video id="tripVid0" src="strand.mp4" poster="strand.jpg" muted playsinline webkit-playsinline preload="auto" disablepictureinpicture></video>
+  <video id="tripVid1" src="trip2.mp4" poster="trip2.jpg" muted playsinline webkit-playsinline preload="auto" disablepictureinpicture hidden></video>
+</div>
 <div class="hud" id="micHud" hidden></div>
 
 <div class="overlay" id="start">
@@ -282,6 +285,16 @@ function buildBody() {
     f.strokeStyle = Math.random() < .6 ? "rgba(168,148,98,.8)" : "rgba(40,32,18,.8)"; f.lineWidth = rand(.5, 1.2);
     f.beginPath(); f.moveTo(x, y); f.lineTo(x + Math.cos(a) * len, y + Math.sin(a) * len); f.stroke();
   }
+  // vereinzelt grüne Kräuterbrösel, die minimal durchs Papier schimmern
+  const greens = ["#5d7a2a", "#4c6a22", "#6b8a30", "#56762b"];
+  for (let i = 0; i < bw * bh * .0035; i++) {
+    const x = rand(filterLen + 6, bw - 2), y = oy + rand(-.85, .85) * r0, r = rand(.8, 2.2), k = 4 + (Math.random() * 3 | 0);
+    f.globalAlpha = rand(.55, .9); f.fillStyle = greens[(Math.random() * greens.length) | 0];
+    f.beginPath();
+    for (let j = 0; j < k; j++) { const a = j / k * 6.283 + rand(-.3, .3), rr = r * rand(.5, 1.1); f.lineTo(x + Math.cos(a) * rr * 1.5, y + Math.sin(a) * rr); }
+    f.closePath(); f.fill();
+  }
+  f.globalAlpha = 1;
   // Crutch: aufgerollter Karton statt Füllung
   f.fillStyle = "#cdbd98"; f.fillRect(0, 0, filterLen, bh);
   f.strokeStyle = "rgba(120,98,66,.55)"; f.lineWidth = 1.3;
@@ -810,8 +823,8 @@ document.getElementById("music").onclick = () => {
 const Z = { open: .25, strike: 1.79, ign: 2.15, catchT: 2.2, off: 3.6, lit: 3.9 };
 const zUp = () => { const n = Math.hypot(GX, GY) || 1; return [-GX / n, -GY / n]; };   // Flamme steigt im Lot: weg vom Boden, zum rechten Rand
 const zTip = () => [burnStart + radius(burnStart) * .18, 0];   // vorn auf der Schnittfläche
-// Flamme setzt an der unteren Kante der Schnittfläche an und hüllt die ganze Öffnung ein
-function zippoBase(h) { const [ux, uy] = zUp(), [tx, ty] = zTip(), R = radius(burnStart) * 1.15; return [tx - ux * R, ty - uy * R]; }
+// Flamme hüllt die ganze Schnittfläche ein; ihr bauchigster Teil sitzt an der gegenüberliegenden Kante der Öffnung
+function zippoBase(h) { const [ux, uy] = zUp(), [tx, ty] = zTip(), R = radius(burnStart) * .45; return [tx - ux * R, ty - uy * R]; }
 // Detailreiche Flamme: blauer Fuß, heller Kern, gelber Leuchtkörper, flackernde Spitze, abreißende Zungen
 function drawFlame(t, a) {
   const e = a - Z.ign;
@@ -894,8 +907,8 @@ function drawJointPart(t, R, lit) {
     eg.addColorStop(0, "#5e4c2e"); eg.addColorStop(.6, "#43361f"); eg.addColorStop(1, "#1f180d");
     ctx.fillStyle = eg; ctx.fill();
     ctx.clip();
-    for (let i = 0; i < 70; i++) {   // Krümel und Fasern in der Öffnung
-      ctx.fillStyle = ["#1e170b", "#7a6640", "#3e4420", "#9a8452", "#5a4a28"][i % 5];
+    for (let i = 0; i < 110; i++) {   // Krümel und Fasern in der Öffnung, gut ein Drittel davon grüne Kräuterbrösel
+      ctx.fillStyle = ["#1e170b", "#56772a", "#7a6640", "#3e5a1e", "#9a8452", "#6b8c33", "#5a4a28", "#47652a"][i % 8];
       ctx.globalAlpha = .55 + hsh(i + 1) * .45;
       ctx.fillRect(ex + (hsh(i) - .5) * rx * 1.7, (hsh(i + 9) - .5) * R * 1.9, .8 + hsh(i + 3) * 1.4, .7 + hsh(i + 5) * 1.1);
     }
@@ -939,15 +952,18 @@ function drawJointPart(t, R, lit) {
     // act: 0 = glimmt nur vor sich hin (ruhig, dunkler, langsam atmend), 1 = es wird gezogen (hell, flackernd)
     const act = state === "lit" ? clamp(heat / .6, 0, 1) : 1;
     ctx.save(); ctx.globalCompositeOperation = "lighter";
+    // Glut bleibt im Joint: nichts ragt über den Umriss hinaus (sah sonst nach kleinen Flammen aus)
+    if (state !== "dive") { ctx.save(); ctx.beginPath(); ctx.rect(bx - R * 1.6, -R * 1.02, R * 2.9 + Math.max(0, ashLen), R * 2.04); ctx.clip(); }
     for (let i = 0; i <= 12; i++) {
       const f = -1 + i / 6;
-      const fl = 1 + .1 * Math.sin(t * 1.3 + i * 1.7) * (1 - act) + (.25 * Math.sin(t * (7 + i) + i * 2.1) + .15 * Math.sin(t * 23 + i)) * (.15 + .85 * act);
-      const x = bx + edgeOff(f, R) + R * .08, y = f * R * .9, rr = R * (.27 + .27 * heat) * fl;
-      const a = I * fl * (1 - Math.abs(f) * .35);
+      const fl = 1 + .08 * Math.sin(t * 1.3 + i * 1.7) * (1 - act) + (.2 * Math.sin(t * (7 + i) + i * 2.1) + .1 * Math.sin(t * 23 + i)) * (.1 + .5 * act);
+      const x = bx + edgeOff(f, R) + R * .05, y = f * R * .9, rr = R * (.22 + .18 * heat) * fl;
+      const a = I * fl * (1 - Math.abs(f) * .35) * .85;
       const g = ctx.createRadialGradient(x, y, 0, x, y, rr);
-      g.addColorStop(0, `rgba(255,${(196 + 40 * act) | 0},${(110 + 60 * act) | 0},${a * (.65 + .25 * act)})`); g.addColorStop(.3, `rgba(255,${(110 + 30 * act) | 0},35,${a * .7})`); g.addColorStop(.7, `rgba(210,45,10,${a * .3})`); g.addColorStop(1, "rgba(120,0,0,0)");
+      g.addColorStop(0, `rgba(255,${(170 + 40 * act) | 0},${(90 + 40 * act) | 0},${a * (.55 + .2 * act)})`); g.addColorStop(.3, `rgba(250,${(95 + 25 * act) | 0},30,${a * .65})`); g.addColorStop(.7, `rgba(190,35,8,${a * .3})`); g.addColorStop(1, "rgba(110,0,0,0)");
       ctx.fillStyle = g; ctx.fillRect(x - rr, y - rr, rr * 2, rr * 2);
     }
+    if (state !== "dive") ctx.restore();
     // Glutnester in der Asche
     for (const e of emberDots) {
       const x = bx + e.d * Math.min(ashLen, R * 1.8), y = e.f * R * .85;
@@ -1099,12 +1115,18 @@ function render(t) {
 
   // fallende Asche
   for (const p of ashFall) {
-    ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.rot); ctx.globalAlpha = clamp(1 - p.life / 1.6, 0, 1);
+    ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.rot); ctx.scale(p.sc || 1, p.sc || 1); ctx.globalAlpha = clamp(1 - p.life / 1.6, 0, 1);
     const hw = p.w / 2, hh = p.h / 2;
     ctx.beginPath();
-    if (ctx.roundRect) ctx.roundRect(-hw, -hh, p.w, p.h, [hh * .35, hh * .9, hh * .9, hh * .35]); else ctx.rect(-hw, -hh, p.w, p.h);
+    if (p.poly) {
+      // unregelmäßiger Klumpen mit Bruchkanten
+      p.poly.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)); ctx.closePath();
+    } else if (ctx.roundRect) ctx.roundRect(-hw, -hh, p.w, p.h, [hh * .35, hh * .9, hh * .9, hh * .35]); else ctx.rect(-hw, -hh, p.w, p.h);
     ctx.clip();
-    ctx.drawImage(ashTex, 0, 0, Math.min(p.w, ashTex.width), ashTex.height, -hw, -hh, p.w, p.h);
+    const sw = Math.min(p.w, ashTex.width), sx = clamp(p.tx || 0, 0, ashTex.width - sw);
+    const sh = p.poly ? Math.min(ashTex.height, ashTex.height * p.h / (r1 * 2)) : ashTex.height, sy = p.poly ? clamp((p.ty || 0) * ashTex.height - sh / 2, 0, ashTex.height - sh) : 0;
+    ctx.drawImage(ashTex, sx, sy, sw, sh, -hw - r1 * .2, -hh, p.w + r1 * .4, p.h);
+    if (p.poly) { ctx.fillStyle = "rgba(40,36,32,.28)"; ctx.fillRect(-hw, -hh, p.w, p.h); }   // Bruchstücke etwas dunkler, mit Schatten
     const fg = ctx.createLinearGradient(0, -hh, 0, hh);
     fg.addColorStop(0, "rgba(0,0,0,.35)"); fg.addColorStop(.3, "rgba(255,255,255,.18)"); fg.addColorStop(.55, "rgba(0,0,0,0)"); fg.addColorStop(1, "rgba(0,0,0,.75)");
     ctx.fillStyle = fg; ctx.fillRect(-hw, -hh, p.w, p.h);
@@ -1294,8 +1316,17 @@ function update(dt, t) {
     s.vx = s.vx * k + GX * g * dt; s.vy = s.vy * k + GY * g * dt; s.x += s.vx * dt; s.y += s.vy * dt;
   }
   sparks = sparks.filter(s => s.life < s.max);
-  for (const p of ashFall) { p.life += dt; p.vx += GX * 900 * dt; p.vy += GY * 900 * dt; p.y += p.vy * dt; p.x += p.vx * dt; p.rot += p.vr * dt; }
-  ashFall = ashFall.filter(p => p.life < 1.6);
+  for (const p of ashFall) {
+    p.life += dt; p.vx += GX * 900 * dt; p.vy += GY * 900 * dt; p.y += p.vy * dt; p.x += p.vx * dt; p.rot += p.vr * dt;
+    if (p.life > p.crumbleAt) {
+      // bröselt im Fall: Flocken lösen sich, der Brocken wird kleiner
+      p.sc = Math.max(.45, p.sc - dt * .9);
+      const k = Math.random() < dt * 22 * (p.w / r1) ? 1 + (Math.random() * 2 | 0) : 0;
+      for (let i = 0; i < k; i++) ashBits(p, 1, false);
+    }
+    if (p.life > p.breakAt && !p.gone) { p.gone = true; ashBits(p, Math.round(8 + p.w / r1 * 10), true); }   // zerfällt endgültig
+  }
+  ashFall = ashFall.filter(p => !p.gone && p.life < 1.6);
   for (const f of flakes) {   // Flocken: Schwerkraft, starker Luftwiderstand, Flattern
     f.life += dt; const d = Math.exp(-2.2 * dt);
     f.vx = f.vx * d + GX * 420 * dt; f.vy = f.vy * d + GY * 420 * dt;
@@ -1314,12 +1345,44 @@ function flick(byHand) {
   }
   const R = radius(bx), keep = byHand ? 0 : len * rand(0, .3);
   const w = len - keep;
-  ashFall.push({ x: bx + keep + w / 2, y: 0, w, h: R * 1.9, vx: GX * (byHand ? 60 : 0) + rand(-20, 20), vy: GY * (byHand ? 60 : 0), rot: 0, vr: rand(-2, 2), life: 0 });
+  // Ein größerer Aschekegel bricht beim Abaschen in mehrere Brocken mit ausgefransten Bruchkanten,
+  // die im Fall zerbröseln und sich auflösen. Kleine Reste fallen als ein Stück und zerfallen ebenso.
+  // in Längsrichtung Stücke von etwa einem Joint-Durchmesser, bei größeren Türmen zusätzlich längs gespalten:
+  // kompakte, unregelmäßige Klumpen statt schmaler Scheiben
+  const n = w > R * 1.3 ? clamp(Math.round(w / (R * rand(.9, 1.3))), 2, 6) : 1;
+  const cuts = [0]; for (let i = 1; i < n; i++) cuts.push(i / n + rand(-.2, .2) / n); cuts.push(1);
+  for (let i = 0; i < n; i++) {
+    const a0 = cuts[i] * w, a1 = cuts[i + 1] * w, cw = a1 - a0, split = n > 1 && Math.random() < .6;
+    const rows = split ? [[-R * .95, rand(-.15, .15) * R], [null, R * .95]] : [[-R * .95, R * .95]];
+    let y0 = -R * .95;
+    for (const [, y1] of rows) {
+      const ch = y1 - y0, cy = (y0 + y1) / 2;
+      const poly = Array.from({ length: 9 }, (_, k) => { const a = k / 9 * 6.283 + rand(-.2, .2), rr = rand(.72, 1.05); return [Math.cos(a) * cw / 2 * rr, Math.sin(a) * ch / 2 * rr]; });
+      const push = byHand ? rand(40, 110) : rand(0, 30), spread = n > 1 ? rand(-70, 70) : rand(-20, 20);
+      ashFall.push({ x: bx + keep + a0 + cw / 2, y: cy, w: cw, h: ch, tx: a0 % Math.max(1, ashTex.width - cw), ty: (cy + R) / (2 * R),
+        vx: GX * push + spread * .5 - GY * spread * .3, vy: GY * push + GX * spread * .3 + rand(-15, 15) + cy * 1.5,
+        rot: rand(-.1, .1), vr: rand(-3.5, 3.5) * (n > 1 ? 1.3 : 1), life: 0, sc: 1, poly,
+        crumbleAt: rand(.06, .2), breakAt: rand(.3, .58) + (n === 1 ? .15 : 0) });
+      y0 = y1;
+    }
+  }
   for (let i = 0; i < 16; i++) sparks.push({ x: bx + keep + rand(0, w), y: rand(-R, R) * .7, vx: rand(-40, 40), vy: rand(-30, 40), r: rand(.4, 1.2), life: 0, max: rand(.2, .6) });
   ashStart = bx + keep; ashLimit = rand(2.2, 4);
   buildEmberDots();
 }
 
+// Ascheflocken aus einem fallenden Brocken lösen (Position im Brocken, Geschwindigkeit mit etwas Streuung)
+function ashBits(p, n, burst) {
+  const c = Math.cos(p.rot), s = Math.sin(p.rot), R = r1;
+  for (let i = 0; i < n; i++) {
+    const lx = rand(-.5, .5) * p.w * p.sc, ly = rand(-.5, .5) * p.h * p.sc;
+    const sz = R * (burst ? rand(.03, .14) : rand(.02, .07)), k = 5 + (Math.random() * 3 | 0), pts = [];
+    for (let q = 0; q < k; q++) { const a = q / k * 6.283 + rand(-.5, .5); pts.push([Math.cos(a) * sz * rand(.4, 1.2), Math.sin(a) * sz * rand(.3, 1)]); }
+    const sp = burst ? 140 : 50;
+    flakes.push({ x: p.x + lx * c - ly * s, y: p.y + lx * s + ly * c, vx: p.vx * rand(.5, .9) + rand(-sp, sp), vy: p.vy * rand(.5, .9) + rand(-sp, sp),
+      rot: rand(0, 6), vr: rand(-12, 12), pts, shade: rand(70, 185) | 0, life: 0, max: rand(.6, 1.4), ph: rand(0, 6), dust: Math.random() < (burst ? .5 : .3) });
+  }
+}
 function sparkPuff(power = 1) {
   const R = radius(bx), tip = Math.max(bx, ashStart);
   const n = Math.round((20 + Math.random() * 14) * power);
@@ -1536,72 +1599,89 @@ function diveUpdate(dt) {
   }
 }
 
-// ---------- Beim dritten Zug: kurz an den Strand (Video vom Spieler) ----------
+// ---------- Ausflüge aus der Glut: Videos bei bestimmten Zügen (ohne gedrückt gehaltenen Bildschirm) ----------
 // Jeder neu begonnene Zug zählt (Mikro oder Finger), egal wie viel er abbrennt.
-const trip = { phase: "none", t: 0, played: false, on: false, buf: null, raw: null, src: null, gain: null, run: 0, timer: 0, unlocked: false, still: false };
+//  3. Zug: Strand-Video des Spielers, immer hochkant, höchstens 3 s
+//  4. Zug: Animations-Video, quer (auf dem Hochkant-Bildschirm gedreht), läuft ganz durch
+const TRIPS = [
+  { at: 3, audio: "strand.mp3", orient: "portrait", maxMs: 3000, gain: .55 },
+  { at: 4, audio: "trip2.mp3", orient: "landscape", maxMs: 14500, gain: .6 },
+];
+const trip = { phase: "none", t: 0, on: false, clip: null, src: null, gain: null, run: 0, timer: 0, still: false };
 let drawCount = 0, fingerCounted = false;
-const tripEl = document.getElementById("trip"), tripVid = document.getElementById("tripVid");
-fetch("strand.mp3").then(r => r.ok ? r.arrayBuffer() : null).then(b => { trip.raw = b; decodeTrip(); }).catch(() => {});
+const tripEl = document.getElementById("trip");
+TRIPS.forEach((c, i) => {
+  c.vid = document.getElementById("tripVid" + i); c.played = false; c.buf = null; c.raw = null;
+  fetch(c.audio).then(r => r.ok ? r.arrayBuffer() : null).then(b => { c.raw = b; decodeTrip(); }).catch(() => {});
+});
 function decodeTrip() {
-  if (!ac || !trip.raw || trip.buf) return;
-  const raw = trip.raw; trip.raw = null;
-  ac.decodeAudioData(raw, b => trip.buf = b, () => {});
+  if (!ac) return;
+  for (const c of TRIPS) if (c.raw && !c.buf) { const raw = c.raw; c.raw = null; ac.decodeAudioData(raw, b => c.buf = b, () => {}); }
 }
 // Muss direkt im Antippen von "Anzünden" passieren: iOS (vor allem im Stromsparmodus) startet Videos sonst nicht von selbst.
 function unlockTripVideo() {
-  try {
-    tripVid.muted = true; tripVid.playsInline = true;
-    const pr = tripVid.play();
-    if (pr && pr.then) pr.then(() => { trip.unlocked = true; if (!trip.on) { tripVid.pause(); try { tripVid.currentTime = 0; } catch (e) {} } }).catch(() => {});
+  for (const c of TRIPS) try {
+    const v = c.vid; v.muted = true; v.playsInline = true;
+    const pr = v.play();
+    if (pr && pr.then) pr.then(() => { if (trip.clip !== c) { v.pause(); try { v.currentTime = 0; } catch (e) {} } }).catch(() => {});
   } catch (e) {}
 }
 function tripCheck(dt) {
   if (trip.on && state !== "lit") { stopTrip(true); return; }
   tripUpdate(dt);
-  if (trip.played || state !== "lit" || dive.phase !== "none" || dive.session) return;
-  trip.run = drawingNow() ? trip.run + dt : 0;
-  if (drawCount >= 3 && trip.run > .3) startTrip();   // der dritte Zug läuft
+  if (trip.on || state !== "lit" || dive.phase !== "none" || dive.session) return;
+  trip.run = drawingNow() && otherHolds().length === 0 ? trip.run + dt : 0;   // nur ohne gedrückt gehaltenen Bildschirm (das führt in die Glutwelt)
+  const c = TRIPS.find(c => !c.played && drawCount >= c.at);
+  if (c && trip.run > .3) startTrip(c);
 }
-const TRIP_MS = 3000;
-function startTrip() {
-  trip.played = true; trip.on = true; trip.still = false;
+function startTrip(c) {
+  c.played = true; trip.clip = c; trip.on = true; trip.still = false;
   // Kameraflug wie in die Glutwelt: auf die Glut zoomen, hineindrehen, dann das Video
   const q = frameM.transformPoint(new DOMPoint(bx + radius(bx) * .15, 0));
   dive.ox = q.x; dive.oy = q.y; dive.fast = false; dive.rot = (Math.random() < .5 ? -1 : 1) * rand(.45, .8);
   trip.phase = "in"; trip.t = 0; whoosh(true);
-  try { tripVid.currentTime = 0; } catch (e) {}
+  try { c.vid.currentTime = 0; } catch (e) {}
 }
 function tripUpdate(dt) {
   if (trip.phase === "in") { trip.t += dt; if (trip.t >= dIn()) showTrip(); }
-  else if (trip.phase === "out") { trip.t += dt; if (trip.t >= dOut()) { trip.phase = "none"; trip.on = false; } }
+  else if (trip.phase === "out") { trip.t += dt; if (trip.t >= dOut()) { trip.phase = "none"; trip.on = false; trip.clip = null; } }
 }
 function showTrip() {
+  const c = trip.clip, v = c.vid;
   trip.phase = "video";
-  // Hochkant-Video; hält man das Handy quer, wird es nach dem Bewegungssensor aufrecht gedreht
+  TRIPS.forEach(o => o.vid.hidden = o !== c);
   let rot = 0;
-  if (gScreen && Math.hypot(gScreen[0], gScreen[1]) > 3) rot = Math.round(Math.atan2(-gScreen[0], gScreen[1]) * 180 / Math.PI / 90) * 90;
-  const side = Math.abs(rot) % 180 === 90;
-  tripVid.style.width = (side ? H : W) + "px"; tripVid.style.height = (side ? W : H) + "px";
-  tripVid.style.setProperty("--rot", rot + "deg");
+  if (c.orient === "landscape" && H > W) {
+    // Querformat auf dem Hochkant-Bildschirm: gedreht, so dass oben beim Halten oben ist (Sensor), sonst Boden links angenommen
+    rot = orient ? -90 : 90;
+    if (gScreen && Math.abs(gScreen[0]) > Math.abs(gScreen[1]) && Math.abs(gScreen[0]) > 3) rot = gScreen[0] < 0 ? 90 : -90;
+  }
+  // das Strand-Video bleibt immer hochkant (keine Drehung)
+  const side = Math.abs(rot) === 90;
+  v.style.width = (side ? H : W) + "px"; v.style.height = (side ? W : H) + "px";
+  v.style.setProperty("--rot", rot + "deg");
+  v.style.objectFit = c.orient === "portrait" && W > H ? "contain" : "cover";
   tripEl.classList.remove("still");
   tripEl.hidden = false; void tripEl.offsetWidth; tripEl.classList.add("on");
-  tripVid.onplaying = () => { if (trip.phase === "video") { tripEl.classList.remove("still"); tripSound(); } };
-  tripVid.onended = () => stopTrip();
-  tripVid.play().catch(() => {});
+  try { v.currentTime = 0; } catch (e) {}
+  v.onplaying = () => { if (trip.phase === "video" && trip.clip === c) { tripEl.classList.remove("still"); tripSound(); } };
+  v.onended = () => { if (trip.clip === c) stopTrip(); };
+  v.play().catch(() => {});
   // Startet das Video nicht (gesperrt oder lädt zu lange): Standbild mit sanftem Zoom und trotzdem Ton
   setTimeout(() => {
-    if (trip.phase !== "video" || (!tripVid.paused && tripVid.currentTime > 0)) return;
+    if (trip.phase !== "video" || trip.clip !== c || (!v.paused && v.currentTime > 0)) return;
     trip.still = true; tripEl.classList.add("still"); tripSound();
   }, 1500);
-  clearTimeout(trip.timer); trip.timer = setTimeout(stopTrip, TRIP_MS);   // spätestens nach 3 s fliegt die Kamera zurück
+  clearTimeout(trip.timer); trip.timer = setTimeout(stopTrip, c.maxMs);
 }
 function tripSound() {
   decodeTrip();
-  if (!ac || !trip.buf) return;
+  const c = trip.clip;
+  if (!ac || !c || !c.buf) return;
   if (trip.src) { try { trip.src.stop(); } catch (e) {} }
   const src = ac.createBufferSource(), g = ac.createGain();
-  src.buffer = trip.buf; g.gain.value = .55;            // etwas leiser als das Original
-  src.connect(g).connect(master); src.start(ac.currentTime, clamp(tripVid.currentTime || 0, 0, trip.buf.duration - .1));
+  src.buffer = c.buf; g.gain.value = c.gain;
+  src.connect(g).connect(master); src.start(ac.currentTime, clamp(c.vid.currentTime || 0, 0, c.buf.duration - .1));
   trip.src = src; trip.gain = g;
 }
 // Video aus, Kamera fliegt aus der Glut zurück zum Joint
@@ -1609,17 +1689,18 @@ function stopTrip(abort) {
   if (!trip.on) return;
   clearTimeout(trip.timer);
   tripEl.classList.remove("on");
-  setTimeout(() => { if (trip.phase !== "video") { tripEl.hidden = true; tripVid.pause(); } }, 350);
+  const c = trip.clip;
+  setTimeout(() => { if (trip.phase !== "video") { tripEl.hidden = true; if (c) c.vid.pause(); } }, 350);
   if (trip.src && ac) { const t = ac.currentTime; trip.gain.gain.setTargetAtTime(0, t, .15); try { trip.src.stop(t + .7); } catch (e) {} }
   trip.src = null;
-  if (abort === true || trip.phase === "in") { trip.phase = "none"; trip.on = false; return; }
+  if (abort === true || trip.phase === "in") { trip.phase = "none"; trip.on = false; trip.clip = null; return; }
   trip.phase = "out"; trip.t = 0; whoosh(false);
 }
 // Antippen: hängt das Video, startet es (Antippen erlaubt das immer); läuft es schon, ist der Ausflug vorbei
 tripEl.addEventListener("pointerdown", e => {
   e.stopPropagation();
   if (trip.phase !== "video") return;
-  if (trip.still) { trip.still = false; tripVid.play().catch(() => {}); return; }
+  if (trip.still && trip.clip) { trip.still = false; trip.clip.vid.play().catch(() => {}); return; }
   stopTrip();
 });
 
@@ -2265,7 +2346,7 @@ document.getElementById("light").onclick = async () => {
   mode = useMode; knock = prefKnock && motionOk; status(""); mStep = 0;
   if (note) { setCue(note); setTimeout(() => setCue(""), 5000); }
   document.getElementById("start").classList.add("gone");
-  state = "lighting"; lightT = 0; unexhaled = 0; autoPuffAt = 0; trip.played = false; trip.run = 0;
+  state = "lighting"; lightT = 0; unexhaled = 0; autoPuffAt = 0; TRIPS.forEach(c => c.played = false); trip.run = 0;
   decodeTrip(); drawCount = 0;
   lighterSound();
   try { navigator.wakeLock && navigator.wakeLock.request("screen").catch(() => {}); } catch (e) {}
@@ -2684,7 +2765,7 @@ function breathStep(dt) {
   if (lungs > 0 && now - lungsAt > 25000) lungs = 0;   // zu lange angehalten: Rauch ist weg
   setCue(micNeedTap ? "Einmal kurz auf den Bildschirm tippen – dann hört das Mikro zu" : audioStuck() ? "Kein Ton? Einmal kurz auf den Bildschirm tippen" : drawCount === 0 && noDrawT > 7 ? "Hörbar am Filter ziehen – das Mikro sitzt unten am Handy" : lungs > .05 && breathState !== "blow" && breathState !== "draw" ? "Reinpusten zum Ausatmen" : "");
   if (micHud) $("micHud").textContent =
-    `${{ idle: "Ruhe", draw: "Ziehen", blow: "Pusten" }[breathState]} · Schwerpunkt ${(centroid / 1000).toFixed(1)} kHz · tief ${micLo | 0} dB / hoch ${micHi | 0} dB · Schwelle ${thr.toFixed(0)} dB · Puste-Wert ${blowScore.toFixed(2)} · Lunge ${lungs.toFixed(1)} · Audio ${ac.state} ${ac.sampleRate} · Spitze ${micPeak | 0} dB · Züge ${drawCount} · Video ${trip.on ? (trip.still ? "Standbild" : "läuft") : trip.played ? "war dran" : "wartet"} · Zippo-Test ${micTest ? (micTest.t0 ? "läuft" : micTest.ok ? "gehört" : "nichts gehört") : "–"} · Kopplung ${cplDb ? Array.from(cplDb, v => v | 0).join("/") : "–"}`;
+    `${{ idle: "Ruhe", draw: "Ziehen", blow: "Pusten" }[breathState]} · Schwerpunkt ${(centroid / 1000).toFixed(1)} kHz · tief ${micLo | 0} dB / hoch ${micHi | 0} dB · Schwelle ${thr.toFixed(0)} dB · Puste-Wert ${blowScore.toFixed(2)} · Lunge ${lungs.toFixed(1)} · Audio ${ac.state} ${ac.sampleRate} · Spitze ${micPeak | 0} dB · Züge ${drawCount} · Videos ${TRIPS.map(c => c.played ? "✓" : "–").join("")}${trip.on ? (trip.still ? " Standbild" : " läuft") : ""} · Zippo-Test ${micTest ? (micTest.t0 ? "läuft" : micTest.ok ? "gehört" : "nichts gehört") : "–"} · Kopplung ${cplDb ? Array.from(cplDb, v => v | 0).join("/") : "–"}`;
 }
 
 // Klopfen auf den Rahmen = Ruck im Beschleunigungssensor; Empfindlichkeit wird beim Anzünden festgelegt
