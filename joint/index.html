@@ -38,6 +38,10 @@ html, body { margin: 0; }
 /* Strand-Video beim dritten Zug: bildschirmfüllend, so gedreht, dass oben = oben beim Halten */
 .trip { position: fixed; inset: 0; z-index: 3; background: #000; overflow: hidden; opacity: 0; transition: opacity .3s ease; }
 .trip.on { opacity: 1; }
+/* Traumränder: weiche Wolken am Bildschirmrand, innen ein warmer Glutschimmer; atmen ganz langsam */
+.dream { position: absolute; inset: -4%; pointer-events: none; background-size: 100% 100%; animation: dreamy 5s ease-in-out infinite alternate; }
+@keyframes dreamy { from { transform: scale(1); opacity: .92; } to { transform: scale(1.035) rotate(.4deg); opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .dream { animation: none; } }
 .trip.still video { animation: kenburns 9s ease-out forwards; }
 @keyframes kenburns { to { transform: translate(-50%, -50%) rotate(var(--rot, 0deg)) scale(1.12); } }
 @media (prefers-reduced-motion: reduce) { .trip.still video { animation: none; } }
@@ -80,6 +84,7 @@ button:focus-visible { outline: 2px solid var(--ember); outline-offset: 3px; }
 <div class="trip" id="trip" hidden>
   <video id="tripVid0" src="strand.mp4" poster="strand.jpg" muted playsinline webkit-playsinline preload="auto" disablepictureinpicture></video>
   <video id="tripVid1" src="trip2.mp4" poster="trip2.jpg" muted playsinline webkit-playsinline preload="auto" disablepictureinpicture hidden></video>
+  <div class="dream" id="dream" hidden></div>
 </div>
 <div class="hud" id="micHud" hidden></div>
 
@@ -1636,12 +1641,12 @@ function diveUpdate(dt) {
 
 // ---------- Ausflüge aus der Glut: Videos bei bestimmten Zügen (ohne gedrückt gehaltenen Bildschirm) ----------
 // Jeder neu begonnene Zug zählt (Mikro oder Finger), egal wie viel er abbrennt.
-//  3. Zug: Strand-Video des Spielers, immer hochkant, höchstens 3 s
-//  4. Zug: Animations-Video, quer (auf dem Hochkant-Bildschirm gedreht), läuft ganz durch
+//  4. Zug: Strand-Video des Spielers, quer und bildfüllend, mit wolkigen Traumrändern, höchstens 3 s
+//  8. Zug: Animations-Video, quer (auf dem Hochkant-Bildschirm gedreht), läuft ganz durch
 const TRIPS = [
-  { at: 3, audio: "strand.mp3", orient: "portrait", maxMs: 3000, gain: .55 },
+  { at: 4, audio: "strand.mp3", orient: "landscape", maxMs: 3000, gain: .55, dream: true },
   // läuft immer ganz durch (Antippen, Bewegung usw. beenden es nicht), nur mit eigenem Ton – ohne Hintergrundmusik
-  { at: 4, audio: "trip2.mp3", orient: "landscape", maxMs: 16000, gain: .7, locked: true, noMusic: true },
+  { at: 8, audio: "trip2.mp3", orient: "landscape", maxMs: 16000, gain: .7, locked: true, noMusic: true },
 ];
 const trip = { phase: "none", t: 0, on: false, clip: null, src: null, gain: null, run: 0, timer: 0, still: false };
 let drawCount = 0, fingerCounted = false;
@@ -1682,10 +1687,34 @@ function tripUpdate(dt) {
   if (trip.phase === "in") { trip.t += dt; if (trip.t >= dIn()) showTrip(); }
   else if (trip.phase === "out") { trip.t += dt; if (trip.t >= dOut()) { trip.phase = "none"; trip.on = false; trip.clip = null; } }
 }
+// Wolkige Traumränder einmal pro Bildschirmgröße zeichnen
+let dreamKey = "";
+function dreamFrame() {
+  const el = document.getElementById("dream"), w = Math.round(W * 1.08), h = Math.round(H * 1.08), key = w + "x" + h;
+  if (key === dreamKey) return; dreamKey = key;
+  const c = document.createElement("canvas"); c.width = w; c.height = h; const g = c.getContext("2d");
+  const m = Math.min(w, h), cx = w / 2, cy = h / 2;
+  // warmer Glutschimmer als weicher Ring (dezent wie der Glutkreis)
+  const ring = g.createRadialGradient(cx, cy, m * .3, cx, cy, Math.max(w, h) * .62);
+  ring.addColorStop(0, "rgba(255,150,60,0)"); ring.addColorStop(.55, "rgba(255,140,50,.12)"); ring.addColorStop(.8, "rgba(255,120,40,.22)"); ring.addColorStop(1, "rgba(120,40,10,.35)");
+  g.fillStyle = ring; g.fillRect(0, 0, w, h);
+  // Wolkenbänke rundherum: viele weiche, helle Ballen, zum Rand hin dichter
+  for (let i = 0; i < 190; i++) {
+    const a = Math.random() * 6.283, edge = Math.pow(Math.random(), .4);
+    const ex = cx + Math.cos(a) * w * (.36 + .24 * edge), ey = cy + Math.sin(a) * h * (.36 + .24 * edge);
+    const r = m * rand(.07, .2) * (.6 + edge * .6), warm = Math.random();
+    const bg = g.createRadialGradient(ex, ey, 0, ex, ey, r);
+    const col = warm < .25 ? "255,214,170" : warm < .4 ? "255,180,120" : "250,244,236";
+    bg.addColorStop(0, `rgba(${col},${(.08 + .22 * edge).toFixed(2)})`); bg.addColorStop(.6, `rgba(${col},${(.03 + .09 * edge).toFixed(2)})`); bg.addColorStop(1, `rgba(${col},0)`);
+    g.fillStyle = bg; g.fillRect(ex - r, ey - r, r * 2, r * 2);
+  }
+  el.style.backgroundImage = `url(${c.toDataURL("image/png")})`;
+}
 function showTrip() {
   const c = trip.clip, v = c.vid;
   trip.phase = "video";
   TRIPS.forEach(o => o.vid.hidden = o !== c);
+  const dr = document.getElementById("dream"); dr.hidden = !c.dream; if (c.dream) dreamFrame();
   let rot = 0;
   if (c.orient === "landscape" && H > W) {
     // Querformat auf dem Hochkant-Bildschirm: gedreht, so dass oben beim Halten oben ist (Sensor), sonst Boden links angenommen
@@ -1696,7 +1725,7 @@ function showTrip() {
   const side = Math.abs(rot) === 90;
   v.style.width = (side ? H : W) + "px"; v.style.height = (side ? W : H) + "px";
   v.style.setProperty("--rot", rot + "deg");
-  v.style.objectFit = c.orient === "portrait" && W > H ? "contain" : "cover";
+  v.style.objectFit = "cover";
   tripEl.classList.remove("still");
   tripEl.hidden = false; void tripEl.offsetWidth; tripEl.classList.add("on");
   try { v.currentTime = 0; } catch (e) {}
