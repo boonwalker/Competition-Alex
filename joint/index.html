@@ -814,10 +814,10 @@ function playSnippet(when, allowResume) {
 function customStop() {
   if (!cGain) return;
   const now = ac.currentTime, g = cGain, s0 = cSrc;
-  g.gain.cancelScheduledValues(now); g.gain.setValueAtTime(g.gain.value, now); g.gain.linearRampToValueAtTime(0, now + .03);   // sofort, aber ohne Knacken
+  g.gain.cancelScheduledValues(now); g.gain.setValueAtTime(g.gain.value, now); g.gain.linearRampToValueAtTime(0, now + .09);   // zügig, aber weich ausblenden
   cSrc = null; cGain = null;
   if (s0 && cPlay) cResume = { pos: cPlay.off + Math.max(0, now - cPlay.t0), end: cPlay.end, at: performance.now() };
-  if (s0) { s0.onended = null; try { s0.stop(now + .05); } catch (e) {} }
+  if (s0) { s0.onended = null; try { s0.stop(now + .12); } catch (e) {} }
 }
 
 function showMusic() { const b = document.getElementById("music"); b.textContent = musicOn ? "♫ Musik: an" : "♫ Musik: aus"; b.setAttribute("aria-pressed", musicOn); }
@@ -835,7 +835,7 @@ const Z = { open: .25, strike: 1.79, ign: 2.15, catchT: 2.2, off: 3.6, lit: 3.9 
 const zUp = () => { const n = Math.hypot(GX, GY) || 1; return [-GX / n, -GY / n]; };   // Flamme steigt im Lot: weg vom Boden, zum rechten Rand
 const zTip = () => [burnStart + radius(burnStart) * .18, 0];   // vorn auf der Schnittfläche
 // Flamme hüllt die ganze Schnittfläche ein; ihr bauchigster Teil sitzt an der gegenüberliegenden Kante der Öffnung
-function zippoBase(h) { const [ux, uy] = zUp(), [tx, ty] = zTip(), R = radius(burnStart) * .45; return [tx - ux * R, ty - uy * R]; }
+function zippoBase(h) { const [ux, uy] = zUp(), [tx, ty] = zTip(), R = radius(burnStart) * .1; return [tx - ux * R, ty - uy * R]; }
 // Detailreiche Flamme: blauer Fuß, heller Kern, gelber Leuchtkörper, flackernde Spitze, abreißende Zungen
 function drawFlame(t, a) {
   const e = a - Z.ign;
@@ -863,7 +863,7 @@ function drawFlame(t, a) {
   halo.addColorStop(0, `rgba(255,150,50,${.28 * size})`); halo.addColorStop(.4, `rgba(255,110,30,${.1 * size})`); halo.addColorStop(1, "rgba(255,80,20,0)");
   ctx.fillStyle = halo; ctx.fillRect(-h * 1.4, -h * 1.7, h * 2.8, h * 2.8);
   // weicher Saum und äußere, durchscheinende Hülle
-  shape(1.3, 1.14); ctx.fillStyle = lin(1.14, [[0, "rgba(80,110,255,0)"], [.15, "rgba(255,130,40,.16)"], [.6, "rgba(255,120,40,.14)"], [1, "rgba(255,80,20,0)"]]); ctx.fill();
+  shape(1.15, 1.12); ctx.fillStyle = lin(1.12, [[0, "rgba(80,110,255,0)"], [.15, "rgba(255,130,40,.16)"], [.6, "rgba(255,120,40,.14)"], [1, "rgba(255,80,20,0)"]]); ctx.fill();
   shape(1.05, 1.08); ctx.fillStyle = lin(1.08, [[0, "rgba(70,110,255,.25)"], [.12, "rgba(255,140,50,.45)"], [.45, "rgba(255,160,60,.5)"], [.8, "rgba(255,100,30,.28)"], [1, "rgba(255,70,20,0)"]]); ctx.fill();
   // gelber Leuchtkörper
   shape(.72, .92, .04); ctx.fillStyle = lin(.92, [[0, "rgba(255,180,80,0)"], [.14, "rgba(255,215,120,.75)"], [.5, "rgba(255,205,95,.7)"], [.85, "rgba(255,150,45,.2)"], [1, "rgba(255,120,30,0)"]]); ctx.fill();
@@ -2751,8 +2751,9 @@ function breathStep(dt) {
       gap = null; lastGap = now;
     } else if (breathState === "draw") sig = true;   // während der Lücke den Zug nicht abreißen lassen
   } else if (mGate && breathState === "draw" && cOut && now - evStart > 500 &&
-             ((bigDrop && now - lastGap > 350) || (now - lastGap > 800 && (dropped || now - Math.max(lastGap, evStart + 300) > 900)))) {
-    // selten prüfen: sofort bei deutlichem Pegelabfall (typisch fürs Aufhören – die Musik endet dann ohnehin), sonst etwa alle 2 s
+             ((bigDrop && now - lastGap > 600) || now - Math.max(lastGap, evStart) > 4500)) {
+    // Die Musik soll beim Ziehen durchlaufen: nur prüfen, wenn der Pegel deutlich abfällt (typisch fürs Aufhören –
+    // die Musik endet dann ohnehin) oder ein Zug mit Musik ungewöhnlich lange dauert
     const lat = ((ac.outputLatency || 0) + (ac.baseLatency || 0)) * 1000;
     const recent = drawLvl.slice(-10).sort((x, y) => x - y);
     gap = { t0: now, lat: clamp(lat, 30, 250), n: 0, min: 999, pre: recent.length ? recent[recent.length >> 1] : hpRel }; musicDuck(true);
@@ -2782,8 +2783,9 @@ function breathStep(dt) {
     }
   } else if (breathState === "draw") {
     lungs += Math.max(0, lastBxBreath - bx) / (L * .08); lastBxBreath = bx; lungsAt = now;
-    if (silentFor > 420) { drawing = false; breathState = "idle"; if (drawFrom - bx > r1 * .15) totalDrags++; drawEnded(); sensUp = Math.max(0, sensUp - 1); }
-    else if (now - evStart > (mGate ? 4500 : 6000)) {
+    // kurze Aussetzer im Atem beenden den Zug (und die Musik) nicht
+    if (silentFor > 650) { drawing = false; breathState = "idle"; if (drawFrom - bx > r1 * .15) totalDrags++; drawEnded(); sensUp = Math.max(0, sensUp - 1); }
+    else if (now - evStart > (mGate ? 7000 : 6000)) {
       // ein so langer Zug bei laufender Musik ist fast immer Rückkopplung: abbrechen und ab jetzt unempfindlicher
       if (mGate) fbPen = Math.min(8, fbPen + 3);
       // so lange zieht niemand: das ist Dauerlärm, als neues Grundrauschen übernehmen
