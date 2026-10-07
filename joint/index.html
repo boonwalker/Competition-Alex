@@ -1618,7 +1618,7 @@ function drawHints(t) {
 function worldDims() {
   // groß genug, dass sie bei jeder Neigung den ganzen Bildschirm füllt
   const D = Math.hypot(W, H);
-  return [Math.ceil(D), Math.ceil(D * .7)];
+  return [Math.ceil(D), Math.ceil(D)];
 }
 // Zielwinkel: "unten" der Welt zeigt zum echten Boden (Bewegungssensor); ohne Sensor wie bisher angenommen
 function worldTargetAngle() {
@@ -1628,7 +1628,7 @@ function worldTargetAngle() {
 }
 function worldTransform() {
   const u = world.u;
-  ctx.setTransform(new DOMMatrix([dpr, 0, 0, dpr, 0, 0]).translate(W / 2, H / 2).rotate(world.theta * 180 / Math.PI).translate(-ww / 2, -(world.ground - 70 * u)));
+  ctx.setTransform(new DOMMatrix([dpr, 0, 0, dpr, 0, 0]).translate(W / 2, H / 2).rotate(world.theta * 180 / Math.PI).translate(-ww / 2, -world.focus));
 }
 // ---------- Die Welt der Marsmännchen: Wüstenstadt im Inneren der Glut (gemalt-realistisch statt Comic) ----------
 const ADOBE = ["#a0603c", "#8c5234", "#b0724a", "#94603e", "#7a4a30", "#9a6a48"];
@@ -1642,7 +1642,14 @@ function shade(hex, f, add = [0, 0, 0]) {
 }
 function makeWorld() {
   [ww, wh] = worldDims();
-  const u = Math.min(W, H) / 300, ground = wh * .8, wallTop = ground - 40 * u;
+  const u = Math.min(W, H) / 300, ground = wh * .5, wallTop = ground - 40 * u;
+  // Bildausschnitt beim Erscheinen (Welt startet waagerecht): im Hochformat wie ein Shorts-Video aufgebaut –
+  // Himmel mit Planet oben, Stadt-Horizont im oberen Drittel, darunter tiefer, brennender Vordergrund
+  const vw = W, vh = H, tall = clamp((vh / vw - 1) / 1.1, 0, 1);
+  const focus = ground - 70 * u + tall * (40 * u + vh * .1);   // Weltpunkt in der Bildmitte
+  const deep = tall * vh * .36;                                // zusätzliche Tiefe des Vordergrunds im Hochformat
+  const span = Math.max(vw * .7, 160 * u);                     // hier laufen die Bewohner hin und her
+  const wd = { deep, tall, x0: ww / 2 - span, x1: ww / 2 + span };
   // Gebäude in zwei Tiefen: Lehmkuppeln, Rundtürme, Antennen-Spitztürme, Feuchtigkeits-Masten
   const blds = [];
   for (let layer = 0; layer < 2; layer++) {
@@ -1660,36 +1667,48 @@ function makeWorld() {
     }
   }
   // Vordergrund: brennende Lehmhäuser links und rechts vom Tor, dazwischen brennende Trümmer
-  const fg = [], fgFires = [], m = Math.max(W, H);
-  for (let i = 0; i < 7; i++) {
-    const side = i % 2 ? 1 : -1, x = ww / 2 + side * m * rand(.12, .48), type = Math.random() < .75 ? "dome" : "tower", sc = rand(1.15, 1.45);
-    const w = (type === "dome" ? rand(50, 76) : rand(24, 32)) * u * sc, h = type === "dome" ? w * rand(.48, .6) : rand(60, 85) * u * sc, base = ground + rand(16, 46) * u;
+  const fg = [], fgFires = [], m = vw, nFg = 7 + Math.round(tall * 4);
+  for (let i = 0; i < nFg; i++) {
+    // je näher (d -> 1), desto tiefer im Bild und größer; im Hochformat rahmen sie unten links und rechts das Bild
+    const d = tall ? (i < 4 ? rand(.55, 1) : rand(0, .6)) : rand(0, 1);
+    const side = i % 2 ? 1 : -1, x = ww / 2 + side * m * rand(.12 + d * tall * .18, .48 + d * tall * .1), type = Math.random() < .75 ? "dome" : "tower";
+    const sc = rand(1.15, 1.45) * (1 + d * tall * .75);
+    const w = (type === "dome" ? rand(50, 76) : rand(24, 32)) * u * sc, h = type === "dome" ? w * rand(.48, .6) : rand(60, 85) * u * sc, base = ground + (16 + d * 30) * u + d * deep;
     const b = { x, base, w, h, sc, type, layer: 2, col: ADOBE[(Math.random() * ADOBE.length) | 0], fire: true, seed: Math.random() * 100, antenna: Math.random() < .3 };
     b.fx = b.x + (hsh(b.seed) - .5) * w * .3; b.fy = base - h * (type === "dome" ? .9 : .98);
     fg.push(b);
   }
-  for (let i = 0; i < 9; i++) fgFires.push({ x: ww / 2 + rand(-.55, .55) * m, y: ground + rand(10, 70) * u, s: rand(12, 22) * u, seed: Math.random() * 90 });
+  for (let i = 0; i < 9 + Math.round(tall * 7); i++) { const d = Math.random(); fgFires.push({ x: ww / 2 + rand(-.55, .55) * m, y: ground + (10 + d * 60) * u + d * deep, s: rand(12, 20) * u * (1 + d * tall * .45), seed: Math.random() * 90 }); }
+  // glühende Risse im Wüstenboden (füllen den tiefen Vordergrund im Hochformat)
+  const cracks = [];
+  for (let i = 0; i < 3 + Math.round(tall * 6); i++) {
+    const d = rand(.15, 1), y0 = ground + (20 + d * 50) * u + d * deep, pts = [];
+    let x = ww / 2 + rand(-.6, .4) * m, y = y0;
+    for (let k = 0; k < 7; k++) { pts.push([x, y]); x += rand(14, 34) * u * (1 + d * tall); y += rand(-5, 5) * u * (1 + d * tall); }
+    cracks.push({ pts, wdt: rand(1.5, 3) * u * (1 + d * tall), seed: Math.random() * 20 });
+  }
   const mesas = [], farSpires = [];
   for (let x = -ww * .2; x < ww * 1.2; x += rand(90, 180) * u) mesas.push({ x, w: rand(80, 170) * u, h: rand(30, 70) * u, top: rand(.5, .8) });
   for (let i = 0; i < 12; i++) farSpires.push({ x: Math.random() * ww, h: rand(50, 110) * u, w: rand(4, 8) * u, seed: Math.random() * 10 });
   const wallFires = [];
   for (let i = 0; i < 6; i++) wallFires.push({ x: rand(0, ww), s: rand(10, 18) * u, seed: Math.random() * 50 });
   const rocks = [];
-  for (let i = 0; i < 26; i++) rocks.push({ x: rand(-ww * .2, ww * 1.2), y: ground + rand(8, 60) * u, r: rand(3, 10) * u, sq: rand(.45, .75), c: rand(.7, 1.1) });
+  for (let i = 0; i < 26 + Math.round(tall * 14); i++) { const d = Math.random(); rocks.push({ x: rand(-ww * .2, ww * 1.2), y: ground + (8 + d * 52) * u + d * deep, r: rand(3, 10) * u * (1 + d * tall * .8), sq: rand(.45, .75), c: rand(.7, 1.1) }); }
   const crs = [];
-  for (let i = 0; i < 26; i++) crs.push(newCreature(u, ground, wallTop, true));
+  for (let i = 0; i < 26 + Math.round(tall * 8); i++) crs.push(newCreature(u, ground, wallTop, true, wd));
   const embers = [];
-  for (let i = 0; i < 90; i++) embers.push({ x: Math.random() * ww, y: Math.random() * wh, v: rand(40, 150) * u, r: rand(.8, 2.6) * u, ph: Math.random() * 6 });
-  return { u, ground, wallTop, blds, fg, fgFires, boost: 0, mesas, farSpires, wallFires, rocks, crs, embers, smk: [], t: 0, theta: worldTargetAngle(),
-    saucer: { t: -2, y: wh * .2 }, shake: 0, gate: ww * rand(.38, .62),
-    // Planet und Mond so, dass sie im sichtbaren Ausschnitt über der Stadt stehen
-    planet: (() => { const m = Math.min(W, H), side = Math.random() < .5 ? -1 : 1; return { x: ww / 2 + side * m * rand(.35, .7), y: ground - 70 * u - m * .42, r: 62 * u, side }; })(),
-    moon: { x: ww / 2 - (Math.random() < .5 ? 1 : -1) * Math.min(W, H) * .5, y: ground - 70 * u - Math.min(W, H) * .36, r: 13 * u } };
+  for (let i = 0; i < 90 + Math.round(tall * 40); i++) embers.push({ x: Math.random() * ww, y: focus + rand(-.5, .5) * wh, v: rand(40, 150) * u, r: rand(.8, 2.6) * u, ph: Math.random() * 6 });
+  const mm = Math.min(W, H), side = Math.random() < .5 ? -1 : 1;
+  return { u, ground, wallTop, focus, wd, cracks, blds, fg, fgFires, boost: 0, mesas, farSpires, wallFires, rocks, crs, embers, smk: [], t: 0, theta: worldTargetAngle(),
+    saucer: { t: -2, y: focus - vh * .3 }, shake: 0, gate: ww / 2 + rand(-.25, .25) * vw,
+    // Planet und Mond so, dass sie im sichtbaren Ausschnitt über der Stadt stehen (im Hochformat höher und größer)
+    planet: { x: ww / 2 + side * (tall ? vw * rand(.12, .28) : mm * rand(.35, .7)), y: ground - 70 * u - mm * .42 - tall * vh * .1, r: 62 * u * (1 + tall * .45), side },
+    moon: { x: ww / 2 - side * (tall ? vw * .32 : mm * .5), y: ground - 70 * u - mm * .36 - tall * vh * .2, r: 13 * u * (1 + tall * .3) } };
 }
-function newCreature(u, ground, wallTop, scatter) {
-  const dir = Math.random() < .5 ? -1 : 1, onWall = Math.random() < .3;
-  return { x: scatter ? Math.random() * ww : (dir > 0 ? -20 * u : ww + 20 * u), y: onWall ? wallTop : ground + rand(6, 40) * u, wall: onWall,
-    vx: dir * rand(70, 170) * u, s: rand(1.05, 1.5) * u, col: ROBE[(Math.random() * ROBE.length) | 0], ph: Math.random() * 6,
+function newCreature(u, ground, wallTop, scatter, wd) {
+  const dir = Math.random() < .5 ? -1 : 1, onWall = Math.random() < .3, d = onWall ? 0 : Math.random();
+  return { x: scatter ? rand(wd.x0, wd.x1) : (dir > 0 ? wd.x0 - 20 * u : wd.x1 + 20 * u), y: onWall ? wallTop : ground + (6 + d * 34) * u + d * wd.deep, wall: onWall,
+    vx: dir * rand(70, 170) * u * (1 + d * wd.tall * .5), s: rand(1.05, 1.5) * u * (1 + d * wd.tall * .7), col: ROBE[(Math.random() * ROBE.length) | 0], ph: Math.random() * 6,
     fire: Math.random() < .25, staff: Math.random() < .3, jump: 0, vy: 0, jy: 0, bub: scatter && Math.random() < .12 ? rand(.5, 1.8) : -rand(0, 3),
     txt: SHOUTS[(Math.random() * SHOUTS.length) | 0], eye: Math.random() < .25 ? [120, 230, 255] : [255, 200, 70], blink: 0, gone: 0 };
 }
@@ -1716,10 +1735,10 @@ function updateWorld(dt) {
   w.theta += d * Math.min(1, dt * 7);   // weich dem Haltewinkel folgen
   if (Math.random() < dt * .7) w.shake = .7;
   for (const c of w.crs) {
-    if (c.gone > 0) { c.gone += dt; if (c.gone > .45) Object.assign(c, newCreature(u, w.ground, w.wallTop, false)); continue; }
+    if (c.gone > 0) { c.gone += dt; if (c.gone > .45) Object.assign(c, newCreature(u, w.ground, w.wallTop, false, w.wd)); continue; }
     c.x += c.vx * dt * (c.fire ? 1.5 : 1); c.ph += dt * (10 + Math.abs(c.vx) / (8 * u));
     if (Math.random() < dt * .55) c.vx *= -1;
-    if (c.x < -30 * u || c.x > ww + 30 * u) { c.vx = -c.vx; c.x = clamp(c.x, -30 * u, ww + 30 * u); }
+    if (c.x < w.wd.x0 - 30 * u || c.x > w.wd.x1 + 30 * u) { c.vx = -c.vx; c.x = clamp(c.x, w.wd.x0 - 30 * u, w.wd.x1 + 30 * u); }
     if (c.jump <= 0 && Math.random() < dt * .6) { c.jump = .001; c.vy = -rand(160, 280) * u; }
     if (c.jump > 0) { c.jump += dt; c.vy += 950 * u * dt; c.jy += c.vy * dt; if (c.jy >= 0) { c.jy = 0; c.jump = 0; } }
     c.blink = Math.random() < dt * .6 ? .15 : Math.max(0, c.blink - dt);
@@ -1732,8 +1751,8 @@ function updateWorld(dt) {
     w.smk.push({ x: b.fx, y: b.fy - 8 * u * b.sc, vx: rand(-6, 6) * u - 6 * u, vy: -rand(18, 34) * u, r: rand(8, 14) * u * b.sc, gr: rand(10, 20) * u, a: rand(.35, .6), life: 0, max: rand(3, 6) });
   for (const p of w.smk) { p.life += dt; p.x += p.vx * dt + Math.sin(p.life * 1.3 + p.r) * 6 * u * dt; p.y += p.vy * dt; }
   w.smk = w.smk.filter(p => p.life < p.max);
-  for (const e of w.embers) { e.y += e.v * dt * (.8 + w.boost * .8); e.x += Math.sin(w.t * 2 + e.ph) * 20 * u * dt - 15 * u * dt; if (e.y > wh + 10) { e.y = -wh * .3; e.x = Math.random() * ww * 1.2; } }
-  w.saucer.t += dt; if (w.saucer.t > 7) { w.saucer.t = -rand(2, 5); w.saucer.y = wh * rand(.12, .28); }
+  for (const e of w.embers) { e.y += e.v * dt * (.8 + w.boost * .8); e.x += Math.sin(w.t * 2 + e.ph) * 20 * u * dt - 15 * u * dt; if (e.y > w.focus + wh * .5) { e.y = w.focus - wh * .5 - rand(0, 40) * u; e.x = Math.random() * ww * 1.2; } }
+  w.saucer.t += dt; if (w.saucer.t > 7) { w.saucer.t = -rand(2, 5); w.saucer.y = w.focus - H * rand(.22, .4); }
 }
 
 // Realistisches Feuer: additiv geschichtete Flammenzungen mit Farbverlauf und Leuchten
@@ -1762,7 +1781,7 @@ function renderWorld(t) {
   const sh = w.shake * 5 * u; ctx.translate((hsh(Math.floor(t * 30)) - .5) * sh, (hsh(Math.floor(t * 30) + 3) - .5) * sh);
   const G = w.ground;
   // Himmel: rauchverhangen, unten vom Brand angestrahlt
-  const sky = ctx.createLinearGradient(0, G - wh * .9, 0, G);
+  const sky = ctx.createLinearGradient(0, G - wh * .63, 0, G);
   sky.addColorStop(0, "#0d0302"); sky.addColorStop(.4, "#2e0a05"); sky.addColorStop(.75, "#7a240c"); sky.addColorStop(1, "#d65a1a");
   ctx.fillStyle = sky; ctx.fillRect(-ww, -wh * 2, ww * 3, G + wh * 2);
   // Mars-artiger Planet und Mond hinter dem Rauch
@@ -1779,7 +1798,7 @@ function renderWorld(t) {
   // glühende Tabakfasern am Himmel (die Welt liegt im Inneren des Joints)
   ctx.save(); ctx.globalCompositeOperation = "lighter"; ctx.lineCap = "round";
   for (let i = 0; i < 3; i++) {
-    const y0 = G - wh * (.55 + i * .1), a = .12 + .08 * Math.sin(t * 2 + i);
+    const y0 = G - wh * .7 * (.55 + i * .1) + w.wd.tall * H * .08, a = .12 + .08 * Math.sin(t * 2 + i);
     ctx.beginPath(); ctx.moveTo(-ww * .2, y0); ctx.bezierCurveTo(ww * .3, y0 - 40 * u, ww * .6, y0 + 50 * u, ww * 1.2, y0 - 20 * u);
     ctx.strokeStyle = `rgba(255,110,30,${a})`; ctx.lineWidth = 16 * u; ctx.stroke();
     ctx.strokeStyle = `rgba(255,190,90,${a * 1.6})`; ctx.lineWidth = 2.5 * u; ctx.stroke();
@@ -1787,7 +1806,7 @@ function renderWorld(t) {
   ctx.restore();
   // Rauchdecke
   for (let i = 0; i < 16; i++) {
-    const x = ((i * 137 + t * 10 * u) % (ww * 1.4)) - ww * .2, y = G - wh * (.45 + hsh(i) * .25), r = (60 + hsh(i + 3) * 70) * u;
+    const x = ((i * 137 + t * 10 * u) % (ww * 1.4)) - ww * .2, y = G - wh * .7 * (.45 + hsh(i) * .25), r = (60 + hsh(i + 3) * 70) * u;
     g = ctx.createRadialGradient(x, y, 0, x, y, r); g.addColorStop(0, "rgba(28,10,6,.55)"); g.addColorStop(1, "rgba(28,10,6,0)");
     ctx.fillStyle = g; ctx.fillRect(x - r, y - r, r * 2, r * 2);
   }
@@ -1826,25 +1845,36 @@ function renderWorld(t) {
     g = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, r); g.addColorStop(0, `rgba(30,14,10,${a})`); g.addColorStop(.6, `rgba(45,22,14,${a * .5})`); g.addColorStop(1, "rgba(45,22,14,0)");
     ctx.fillStyle = g; ctx.fillRect(p.x - r, p.y - r, r * 2, r * 2);
   }
-  const fm = .65 + w.boost * 1.15;   // Flammen lodern mit dem Ziehen auf
+  const fm = .65 + w.boost * .85;   // Flammen lodern mit dem Ziehen auf
   for (const b of w.blds) if (b.fire) realFire(b.fx, b.fy + 4 * u * b.sc, (14 + hsh(b.seed + 1) * 12) * u * b.sc * fm, t, b.seed);
   // Lehmmauer mit Tor
   drawWall2(w, u, t);
   // Wüstenboden vorne: Sand, Dünenkanten, Geröll
-  g = ctx.createLinearGradient(0, G, 0, G + 90 * u); g.addColorStop(0, "#4a1c0c"); g.addColorStop(1, "#1a0805");
+  const deep = w.wd.deep;
+  g = ctx.createLinearGradient(0, G, 0, G + 90 * u + deep); g.addColorStop(0, "#4a1c0c"); g.addColorStop(.6, "#2c0f07"); g.addColorStop(1, "#1a0805");
   ctx.fillStyle = g; ctx.fillRect(-ww, G, ww * 3, wh * 2);
   ctx.strokeStyle = "rgba(255,130,60,.14)"; ctx.lineWidth = 2 * u;
-  for (let i = 0; i < 7; i++) { const y = G + (12 + i * 14) * u; ctx.beginPath(); ctx.moveTo(-ww * .2, y); for (let x = -ww * .2; x < ww * 1.2; x += 30 * u) ctx.lineTo(x, y + Math.sin(x * .012 + i * 1.7) * 5 * u); ctx.stroke(); }
+  const nDune = 7 + Math.round(w.wd.tall * 7);
+  for (let i = 0; i < nDune; i++) { const y = G + (12 + i * 14) * u * (1 + i * .07 * w.wd.tall) + (i / nDune) * deep * .4; ctx.beginPath(); ctx.moveTo(-ww * .2, y); for (let x = -ww * .2; x < ww * 1.2; x += 30 * u) ctx.lineTo(x, y + Math.sin(x * .012 + i * 1.7) * 5 * u); ctx.stroke(); }
   for (const r of w.rocks) {
     g = ctx.createRadialGradient(r.x - r.r * .3, r.y - r.r * .5, 0, r.x, r.y, r.r * 1.2);
     g.addColorStop(0, shade("#8a4a2a", r.c, [30, 10, 0])); g.addColorStop(1, shade("#2a1008", r.c));
     ctx.fillStyle = "rgba(0,0,0,.35)"; ctx.beginPath(); ctx.ellipse(r.x + r.r * .3, r.y + r.r * .45, r.r * 1.1, r.r * .35, 0, 0, 7); ctx.fill();
     ctx.fillStyle = g; ctx.beginPath(); ctx.ellipse(r.x, r.y, r.r, r.r * r.sq, 0, 0, 7); ctx.fill();
   }
-  // Bewohner
+  // glühende Risse im Boden, pulsieren mit dem Ziehen
+  ctx.save(); ctx.globalCompositeOperation = "lighter"; ctx.lineJoin = "round"; ctx.lineCap = "round";
+  for (const c of w.cracks) {
+    const pu = .55 + .25 * Math.sin(t * 2.3 + c.seed) + w.boost * .4;
+    ctx.beginPath(); c.pts.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y));
+    ctx.strokeStyle = `rgba(255,90,20,${.22 * pu})`; ctx.lineWidth = c.wdt * 4; ctx.stroke();
+    ctx.strokeStyle = `rgba(255,170,60,${.6 * pu})`; ctx.lineWidth = c.wdt * 1.3; ctx.stroke();
+    ctx.strokeStyle = `rgba(255,240,180,${.5 * pu})`; ctx.lineWidth = c.wdt * .45; ctx.stroke();
+  }
+  ctx.restore();
   // Bewohner, brennende Häuser und Feuer im Vordergrund nach Tiefe sortiert
   const items = w.crs.map(c => [c.y, () => drawRobed(c, t, u)])
-    .concat(w.fg.map(b => [b.base, () => { drawBuilding2(b, t, u); realFire(b.fx, b.fy + 4 * u * b.sc, (18 + hsh(b.seed + 1) * 14) * u * b.sc * fm, t, b.seed); }]))
+    .concat(w.fg.map(b => [b.base, () => { drawBuilding2(b, t, u); realFire(b.fx, b.fy + 4 * u * b.sc, (18 + hsh(b.seed + 1) * 14) * u * Math.min(b.sc, 1.5) * fm, t, b.seed); }]))
     .concat(w.fgFires.map(f => [f.y, () => {
       ctx.fillStyle = "rgba(20,8,4,.6)"; ctx.beginPath(); ctx.ellipse(f.x, f.y, f.s * .9, f.s * .25, 0, 0, 7); ctx.fill();   // verkohlte Trümmer
       realFire(f.x, f.y, f.s * fm, t, f.seed);
@@ -1852,8 +1882,8 @@ function renderWorld(t) {
   items.sort((a, b) => a[0] - b[0]).forEach(it => it[1]());
   // Feuerschein über allem, stärker beim Ziehen
   ctx.save(); ctx.globalCompositeOperation = "lighter";
-  const fl = ctx.createLinearGradient(0, G - 120 * u, 0, G + 80 * u); fl.addColorStop(0, "rgba(255,110,30,0)"); fl.addColorStop(1, `rgba(255,110,30,${.06 + w.boost * .16})`);
-  ctx.fillStyle = fl; ctx.fillRect(-ww, G - 120 * u, ww * 3, 200 * u); ctx.restore();
+  const fl = ctx.createLinearGradient(0, G - 120 * u, 0, G + 80 * u + deep); fl.addColorStop(0, "rgba(255,110,30,0)"); fl.addColorStop(1, `rgba(255,110,30,${.06 + w.boost * .16})`);
+  ctx.fillStyle = fl; ctx.fillRect(-ww, G - 120 * u, ww * 3, 200 * u + deep); ctx.restore();
   // Glutregen
   ctx.save(); ctx.globalCompositeOperation = "lighter";
   for (const e of w.embers) { const er = e.r * (.8 + w.boost * .7); g = ctx.createRadialGradient(e.x, e.y, 0, e.x, e.y, er * 3); g.addColorStop(0, "rgba(255,220,130,.9)"); g.addColorStop(1, "rgba(255,80,0,0)"); ctx.fillStyle = g; ctx.fillRect(e.x - er * 3, e.y - er * 3, er * 6, er * 6); }
@@ -1868,6 +1898,7 @@ function renderWorld(t) {
   ctx.font = `${Math.round(14 * u)}px Bangers, Impact, sans-serif`; ctx.textBaseline = "top";
   const cap = "LIVE AUS DER GLUT · DIE WÜSTENSTADT DER MARSMÄNNCHEN · 0,3 MM";
   let cx = -vw / 2 + 16, cy = -vh / 2 + 14;
+  { const tw = ctx.measureText(cap).width; if (tw > vw - 32) ctx.font = `${Math.round(14 * u * (vw - 32) / tw)}px Bangers, Impact, sans-serif`; }
   if (Math.min(c, sn) > .3) {
     const m = Math.min(W, H) * .42, tw = ctx.measureText(cap).width;
     if (tw > m * 2) ctx.font = `${Math.round(14 * u * m * 2 / tw)}px Bangers, Impact, sans-serif`;
