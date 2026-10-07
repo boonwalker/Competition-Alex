@@ -1738,10 +1738,10 @@ function diveUpdate(dt) {
   }
 }
 
-// ---------- Ausflüge aus der Glut: Videos bei bestimmten Zügen (ohne gedrückt gehaltenen Bildschirm) ----------
-// Jeder neu begonnene Zug zählt (Mikro oder Finger), egal wie viel er abbrennt.
-//  4. Zug: Strand-Video des Spielers, quer und bildfüllend, mit wolkigen Traumrändern, höchstens 3 s
-//  7. Zug: Animations-Video (die letzten 7 s), quer (auf dem Hochkant-Bildschirm gedreht), läuft ganz durch
+// ---------- Ausflüge aus der Glut: Videos nach abgebranntem Anteil (beim nächsten Zug ohne gedrückt gehaltenen Bildschirm) ----------
+// Gedrückt halten führt dagegen immer in die Glutwelt.
+//  ab 1/3 abgebrannt: Strand-Video des Spielers, quer und bildfüllend, mit wolkigen Traumrändern, höchstens 3 s
+//  ab 3/5 abgebrannt: Animations-Video (die letzten 7 s), quer (auf dem Hochkant-Bildschirm gedreht), läuft ganz durch
 // Nach der Rückkehr (Video oder Glutwelt) glimmt der Joint noch kurz kräftig weiter und die Musik läuft aus –
 // dann wird beides sicher gestoppt (sonst hält die Musik im Mikro das Abbrennen am Laufen)
 const AFTER_MS = 1000;   // spätestens nach 1 s: Abbrennen und Musik werden gestoppt
@@ -1751,9 +1751,9 @@ const afterglow = () => {
   return Math.max(a, d);
 };
 const TRIPS = [
-  { at: 4, audio: "strand.mp3", orient: "landscape", maxMs: 3000, gain: .55, dream: true },
+  { frac: 1 / 3, audio: "strand.mp3", orient: "landscape", maxMs: 3000, gain: .55, dream: true },
   // läuft immer ganz durch (Antippen, Bewegung usw. beenden es nicht), nur mit eigenem Ton – ohne Hintergrundmusik
-  { at: 7, audio: "trip2.mp3", orient: "landscape", maxMs: 8500, gain: .7, locked: true, noMusic: true },
+  { frac: 3 / 5, audio: "trip2.mp3", orient: "landscape", maxMs: 8500, gain: .7, locked: true, noMusic: true },
 ];
 const trip = { phase: "none", t: 0, on: false, clip: null, src: null, gain: null, run: 0, timer: 0, still: false };
 let drawCount = 0, fingerCounted = false, zugCounted = false, zugByThis = false, lastDrawEnd = -1e9;
@@ -1781,7 +1781,11 @@ function tripCheck(dt) {
   tripUpdate(dt);
   if (trip.on || state !== "lit" || dive.phase !== "none" || dive.session) return;
   trip.run = drawingNow() && otherHolds().length === 0 ? trip.run + dt : 0;   // nur ohne gedrückt gehaltenen Bildschirm (das führt in die Glutwelt)
-  const c = TRIPS.find(c => !c.played && drawCount >= c.at);
+  // Anteil abgebrannt: ist die Marke erreicht, kommt das Video beim nächsten neu begonnenen Zug (der laufende zählt nicht mit)
+  const burnt = (burnStart - bx) / (burnStart - burnEnd);
+  for (const c of TRIPS) if (c.arm === undefined && burnt >= c.frac)
+    c.arm = drawCount + (drawingNow() && (mode === "breath" ? !zugCounted : !fingerCounted) ? 1 : 0);
+  const c = TRIPS.find(c => !c.played && c.arm !== undefined && drawCount > c.arm);
   if (c && trip.run > .3) startTrip(c);
 }
 function startTrip(c) {
@@ -2615,7 +2619,7 @@ document.getElementById("light").onclick = async () => {
   mode = useMode; knock = prefKnock && motionOk; status(""); mStep = 0;
   if (note) { setCue(note); setTimeout(() => setCue(""), 5000); }
   document.getElementById("start").classList.add("gone");
-  state = "lighting"; lightT = 0; unexhaled = 0; autoPuffAt = 0; TRIPS.forEach(c => c.played = false); trip.run = 0;
+  state = "lighting"; lightT = 0; unexhaled = 0; autoPuffAt = 0; TRIPS.forEach(c => { c.played = false; c.arm = undefined; }); trip.run = 0;
   decodeTrip(); drawCount = 0;
   lighterSound();
   try { navigator.wakeLock && navigator.wakeLock.request("screen").catch(() => {}); } catch (e) {}
