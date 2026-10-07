@@ -852,7 +852,8 @@ document.getElementById("music").onclick = () => {
 // Anzünden mit dem Zippo: Deckel auf, Reibrad, Flamme, Deckel zu (Zeiten in Sekunden ab dem Tipp)
 // Aufnahme des Spielers: Deckel auf, 1,5 s später Reibrad mit direkt folgender Flamme – erst dann entflammt der Joint
 const Z = { open: .25, strike: 1.79, ign: 2.15, catchT: 2.2, off: 3.6, lit: 3.9 };
-const zUp = () => { const n = Math.hypot(GX, GY) || 1; return [-GX / n, -GY / n]; };   // Flamme steigt im Lot: weg vom Boden, zum rechten Rand
+// Flamme steigt im Lot zu den langen Seiten des Joints nach oben (senkrecht zur Joint-Achse, zur Oberseite hin)
+const zUp = () => [0, -1];
 const zTip = () => [burnStart - radius(burnStart) * .12, 0];   // an der oberen Kante der Öffnung
 // Flamme hüllt die ganze Schnittfläche ein; ihr bauchigster Teil sitzt an der gegenüberliegenden Kante der Öffnung
 function zippoBase(h) { const [ux, uy] = zUp(), [tx, ty] = zTip(), R = radius(burnStart) * .7; return [tx - ux * R, ty - uy * R]; }   // Flammenfuß umschließt die linke obere Kante
@@ -1404,7 +1405,8 @@ function update(dt, t) {
 
 function flick(byHand) {
   const len = ashStart - bx;
-  if (len < r1 * .9) {
+  // Abklopfen klappt schon bei kleinerem Aschekegel; von selbst bricht er erst bei größerer Länge ab (ashLimit)
+  if (len < r1 * (byHand ? .45 : .9)) {
     // kaum Asche da: statt abzufallen stieben nur ein paar Funken von der Glut
     if (byHand) sparkPuff();
     return;
