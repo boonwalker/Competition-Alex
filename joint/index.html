@@ -1557,7 +1557,7 @@ function update(dt, t) {
     }
     if (drawing && mode === "breath") bx -= span * dt * .035 * micInt;                          // brennt, solange Luft gezogen wird
     // ein Zug zählt erst, wenn er wirklich einer ist: mindestens ~0,45 s und spürbar abgebrannt
-    if (mode === "breath" && breathState === "draw" && !zugCounted && zugSigT > .4 && drawFrom - bx > r1 * .1) { zugCounted = true; zugByThis = true; drawCount++; }
+    if (mode === "breath" && breathState === "draw" && !zugCounted && zugSigT > .4 && drawFrom - bx > r1 * .05) { zugCounted = true; zugByThis = true; drawCount++; }
     else if (ag > 0 && !dr) bx -= span * dt * .012 * ag;                                          // Nachglühen nach einem Video
     if (dr) { drawTime += dt; haze = Math.min(1.2, haze + dt * .035); }
     // beim Ziehen sackt die Asche etwas zusammen: der Aschekegel wächst langsamer, als der Joint abbrennt
@@ -1972,7 +1972,7 @@ function finish(msg, title) {
   state = "out"; drawing = false; pid = null; heat = 0; breathState = "idle"; setCue(""); stopMic();
   if (ac) { crackleGain.gain.setTargetAtTime(0, ac.currentTime, .1); hissGain.gain.setTargetAtTime(0, ac.currentTime, .1); }
   document.querySelector("#end h1").textContent = title || "Aufgeraucht.";
-  document.getElementById("endtxt").textContent = `${totalDrags} ${totalDrags === 1 ? "Zug" : "Züge"}. ${msg || "Nur noch Crutch übrig."}`;
+  document.getElementById("endtxt").textContent = `${drawCount} ${drawCount === 1 ? "Zug" : "Züge"}. ${msg || "Nur noch Crutch übrig."}`;   // dieselbe Zählung wie im Spiel
   setTimeout(() => document.getElementById("end").classList.remove("gone"), 1400);
 }
 
@@ -2058,7 +2058,7 @@ const TRIPS = [
 const trip = { phase: "none", t: 0, on: false, clip: null, src: null, gain: null, run: 0, timer: 0, still: false };
 let drawCount = 0, fingerCounted = false, zugCounted = false, zugByThis = false, lastDrawEnd = -1e9;
 // neuer Zug beginnt; setzt man nach einer ganz kurzen Pause wieder an, ist es derselbe Zug
-function zugStart(now) { if (now - lastDrawEnd < 900) { zugByThis = false; return; } zugCounted = false; zugByThis = false; zugSigT = 0; }
+function zugStart(now) { if (now - lastDrawEnd < 400) { zugByThis = false; return; } zugCounted = false; zugByThis = false; zugSigT = 0; }
 const tripEl = document.getElementById("trip");
 TRIPS.forEach((c, i) => {
   c.vid = document.getElementById("tripVid" + i); c.played = false; c.buf = null; c.raw = null;
