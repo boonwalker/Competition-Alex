@@ -36,7 +36,7 @@ html, body { margin: 0; }
 .seg button[aria-checked="true"] { background: var(--ember); color: #1a0d04; border-color: var(--ember); }
 .settings input[type=range] { width: 100%; accent-color: var(--ember); }
 /* Strand-Video beim dritten Zug: bildschirmfüllend, so gedreht, dass oben = oben beim Halten */
-.trip { position: fixed; inset: 0; z-index: 3; background: #000; overflow: hidden; opacity: 0; transition: opacity .7s ease; }
+.trip { position: fixed; inset: 0; z-index: 3; background: #000; overflow: hidden; opacity: 0; transition: opacity .3s ease; }
 .trip.on { opacity: 1; }
 .trip.still video { animation: kenburns 9s ease-out forwards; }
 @keyframes kenburns { to { transform: translate(-50%, -50%) rotate(var(--rot, 0deg)) scale(1.12); } }
@@ -762,7 +762,7 @@ function musicTone(now) {
   const tone = state === "dive" ? "world" : trip.on ? "video" : musicQuiet() ? "quiet" : "full";
   if (tone === cTone) return;
   cTone = tone;
-  const [f, g] = { full: [20000, 1], quiet: [900, .55], world: [520, .3], video: [1600, .45] }[tone], t = ac.currentTime, tc = now === true ? .001 : .25;
+  const [f, g] = { full: [20000, 1], quiet: [2000, 1], world: [700, .45], video: [1800, .7] }[tone], t = ac.currentTime, tc = now === true ? .001 : .25;
   for (const n of [cFilter, cFilter2]) { n.frequency.cancelScheduledValues(t); n.frequency.setTargetAtTime(f, t, tc); }
   cOut.gain.cancelScheduledValues(t); cOut.gain.setTargetAtTime(g, t, tc);
 }
@@ -794,7 +794,8 @@ document.getElementById("music").onclick = () => {
 
 // ---------- Zeichnen ----------
 // Anzünden mit dem Zippo: Deckel auf, Reibrad, Flamme, Deckel zu (Zeiten in Sekunden ab dem Tipp)
-const Z = { open: .15, strike: .58, ign: .64, catchT: .7, off: 1.9, lit: 2.2 };   // Zippo ist nur zu hören, der Joint entflammt einfach
+// Aufnahme des Spielers: Deckel auf, 1,5 s später Reibrad mit direkt folgender Flamme – erst dann entflammt der Joint
+const Z = { open: .25, strike: 1.79, ign: 2.15, catchT: 2.2, off: 3.6, lit: 3.9 };
 const zUp = () => { const n = Math.hypot(GX, GY) || 1; return [-GX / n, -GY / n]; };   // Flamme steigt im Lot: weg vom Boden, zum rechten Rand
 const zTip = () => [burnStart + r1 * .35, 0];
 function zippoBase(h) { const [ux, uy] = zUp(), [tx, ty] = zTip(); return [tx - ux * h * .06, ty - uy * h * .06]; }   // Flamme sitzt auf der gedrehten Spitze
@@ -1510,7 +1511,7 @@ function diveUpdate(dt) {
 
 // ---------- Beim dritten Zug: kurz an den Strand (Video vom Spieler) ----------
 // Jeder neu begonnene Zug zählt (Mikro oder Finger), egal wie viel er abbrennt.
-const trip = { played: false, on: false, buf: null, raw: null, src: null, gain: null, run: 0, timer: 0, unlocked: false, still: false };
+const trip = { phase: "none", t: 0, played: false, on: false, buf: null, raw: null, src: null, gain: null, run: 0, timer: 0, unlocked: false, still: false };
 let drawCount = 0, fingerCounted = false;
 const tripEl = document.getElementById("trip"), tripVid = document.getElementById("tripVid");
 fetch("strand.mp3").then(r => r.ok ? r.arrayBuffer() : null).then(b => { trip.raw = b; decodeTrip(); }).catch(() => {});
@@ -1528,28 +1529,40 @@ function unlockTripVideo() {
   } catch (e) {}
 }
 function tripCheck(dt) {
-  if (trip.on && state !== "lit") { stopTrip(); return; }
+  if (trip.on && state !== "lit") { stopTrip(true); return; }
+  tripUpdate(dt);
   if (trip.played || state !== "lit" || dive.phase !== "none" || dive.session) return;
   trip.run = drawingNow() ? trip.run + dt : 0;
   if (drawCount >= 3 && trip.run > .3) startTrip();   // der dritte Zug läuft
 }
 function startTrip() {
   trip.played = true; trip.on = true; trip.still = false;
-  // Ausrichtung: Oberkante des Videos zeigt nach oben (Bewegungssensor), sonst wie beim Halten angenommen
-  let rot = H > W ? (orient ? -90 : 90) : 0;
+  // Kameraflug wie in die Glutwelt: auf die Glut zoomen, hineindrehen, dann das Video
+  const q = frameM.transformPoint(new DOMPoint(bx + radius(bx) * .15, 0));
+  dive.ox = q.x; dive.oy = q.y; dive.fast = false; dive.rot = (Math.random() < .5 ? -1 : 1) * rand(.45, .8);
+  trip.phase = "in"; trip.t = 0; whoosh(true);
+  try { tripVid.currentTime = 0; } catch (e) {}
+}
+function tripUpdate(dt) {
+  if (trip.phase === "in") { trip.t += dt; if (trip.t >= dIn()) showTrip(); }
+  else if (trip.phase === "out") { trip.t += dt; if (trip.t >= dOut()) { trip.phase = "none"; trip.on = false; } }
+}
+function showTrip() {
+  trip.phase = "video";
+  // Hochkant-Video; hält man das Handy quer, wird es nach dem Bewegungssensor aufrecht gedreht
+  let rot = 0;
   if (gScreen && Math.hypot(gScreen[0], gScreen[1]) > 3) rot = Math.round(Math.atan2(-gScreen[0], gScreen[1]) * 180 / Math.PI / 90) * 90;
   const side = Math.abs(rot) % 180 === 90;
   tripVid.style.width = (side ? H : W) + "px"; tripVid.style.height = (side ? W : H) + "px";
   tripVid.style.setProperty("--rot", rot + "deg");
   tripEl.classList.remove("still");
   tripEl.hidden = false; void tripEl.offsetWidth; tripEl.classList.add("on");
-  try { tripVid.currentTime = 0; } catch (e) {}
-  tripVid.onplaying = () => { if (trip.on) { tripEl.classList.remove("still"); tripSound(); } };
+  tripVid.onplaying = () => { if (trip.phase === "video") { tripEl.classList.remove("still"); tripSound(); } };
   tripVid.onended = () => stopTrip();
   tripVid.play().catch(() => {});
   // Startet das Video nicht (gesperrt oder lädt zu lange): Standbild mit sanftem Zoom und trotzdem Ton
   setTimeout(() => {
-    if (!trip.on || (!tripVid.paused && tripVid.currentTime > 0)) return;
+    if (trip.phase !== "video" || (!tripVid.paused && tripVid.currentTime > 0)) return;
     trip.still = true; tripEl.classList.add("still"); tripSound();
     clearTimeout(trip.timer); trip.timer = setTimeout(stopTrip, 9500);
   }, 1500);
@@ -1564,18 +1577,22 @@ function tripSound() {
   src.connect(g).connect(master); src.start(ac.currentTime, clamp(tripVid.currentTime || 0, 0, trip.buf.duration - .1));
   trip.src = src; trip.gain = g;
 }
-function stopTrip() {
+// Video aus, Kamera fliegt aus der Glut zurück zum Joint
+function stopTrip(abort) {
   if (!trip.on) return;
-  trip.on = false; clearTimeout(trip.timer);
+  clearTimeout(trip.timer);
   tripEl.classList.remove("on");
-  setTimeout(() => { if (!trip.on) { tripEl.hidden = true; tripVid.pause(); } }, 750);
-  if (trip.src && ac) { const t = ac.currentTime; trip.gain.gain.setTargetAtTime(0, t, .2); try { trip.src.stop(t + .9); } catch (e) {} }
+  setTimeout(() => { if (trip.phase !== "video") { tripEl.hidden = true; tripVid.pause(); } }, 350);
+  if (trip.src && ac) { const t = ac.currentTime; trip.gain.gain.setTargetAtTime(0, t, .15); try { trip.src.stop(t + .7); } catch (e) {} }
   trip.src = null;
+  if (abort === true || trip.phase === "in") { trip.phase = "none"; trip.on = false; return; }
+  trip.phase = "out"; trip.t = 0; whoosh(false);
 }
 // Antippen: hängt das Video, startet es (Antippen erlaubt das immer); läuft es schon, ist der Ausflug vorbei
 tripEl.addEventListener("pointerdown", e => {
   e.stopPropagation();
-  if (trip.on && trip.still) { trip.still = false; clearTimeout(trip.timer); trip.timer = setTimeout(stopTrip, 11000); tripVid.play().catch(() => {}); return; }
+  if (trip.phase !== "video") return;
+  if (trip.still) { trip.still = false; clearTimeout(trip.timer); trip.timer = setTimeout(stopTrip, 11000); tripVid.play().catch(() => {}); return; }
   stopTrip();
 });
 
@@ -2204,7 +2221,7 @@ cv.addEventListener("pointerup", release); cv.addEventListener("pointercancel", 
 cv.addEventListener("contextmenu", e => e.preventDefault());
 
 document.getElementById("light").onclick = async () => {
-  ensureAudio(); decodeCustom(); unlockTripVideo();
+  ensureAudio(); decodeCustom(); decodeZippo(); unlockTripVideo();
   const motionP = requestMotion();   // auch ohne Klopfen: für die Neigung der Glutwelt
   let useMode = prefMode, note = "";
   if (prefMode === "breath") {
@@ -2405,8 +2422,39 @@ function zRing(t, parts, peak, dest) {
     o.connect(g).connect(dest || master); o.start(t); o.stop(t + tau * 7);
   }
 }
+// Zippo-Aufnahmen des Spielers laden
+const zRec = { auf: null, rad: null, raw: {} };
+for (const k of ["auf", "rad"]) fetch(`zippo_${k}.mp3`).then(r => r.ok ? r.arrayBuffer() : null).then(b => { zRec.raw[k] = b; decodeZippo(); }).catch(() => {});
+// schon beim Laden dekodieren (Offline-Kontext braucht kein Antippen), damit das Anzünden sofort die Aufnahme hat
+let zDec = null;
+try { const O = window.OfflineAudioContext || window.webkitOfflineAudioContext; if (O) zDec = new O(1, 1, 44100); } catch (e) {}
+function decodeZippo() {
+  const c = zDec || ac; if (!c) return;
+  for (const k of ["auf", "rad"]) if (zRec.raw[k] && !zRec[k]) {
+    const raw = zRec.raw[k]; zRec.raw[k] = null;
+    try { const pr = c.decodeAudioData(raw, b => zRec[k] = b, () => {}); if (pr && pr.catch) pr.catch(() => {}); } catch (e) {}
+  }
+}
 function lighterSound() {
   if (!ac || !noiseBuf) return;
+  decodeZippo();
+  if (zRec.auf && zRec.rad) { lighterRec(); return; }
+  lighterSynth();
+}
+function lighterRec() {
+  const t0 = ac.currentTime + .02, play = (buf, at, gain) => {
+    const s = ac.createBufferSource(), g = ac.createGain(); s.buffer = buf; g.gain.value = gain; s.connect(g).connect(master); s.start(at); return g;
+  };
+  play(zRec.auf, t0 + Z.open - .04, 1);
+  const g = play(zRec.rad, t0 + Z.strike - .04, 1.5);
+  // das Fauchen der Flamme klingt aus, wenn die Spitze in Glut übergeht
+  g.gain.setValueAtTime(1.5, t0 + Z.off - .1); g.gain.linearRampToValueAtTime(0, t0 + Z.off + .4);
+  // leises Gaszischen darunter: liefert beim Einmessen auch die Höhen (die Aufnahme ist vor allem tief)
+  const hs = zNoise(t0 + Z.ign, Z.off - Z.ign + .3, "highpass", 2200, .5, .045, .1, 5, master);
+  hs.gain.setValueAtTime(.045, t0 + Z.off - .1); hs.gain.linearRampToValueAtTime(0, t0 + Z.off + .2);
+  if (micAna) { calibUntil = performance.now() + (Z.off + .3) * 1000; calibR = []; micTest = { base: micPeak, max: -200, t0: performance.now() }; }
+}
+function lighterSynth() {
   const t0 = ac.currentTime + .02, bus = ac.createGain(); bus.gain.value = 1; bus.connect(master);
   // 1) Deckel auf: "Klick-Kling" – Nocke schnappt, Deckel schlägt an
   const to = t0 + Z.open;
@@ -2613,7 +2661,12 @@ function loop(now) {
   try {
     update(dt, now / 1000);
     sanitize();
-    if (dive.phase !== "none") renderDive(now / 1000); else render(now / 1000);
+    if (dive.phase !== "none") renderDive(now / 1000);
+    else if (trip.phase === "in" || trip.phase === "out") {
+      // Kameraflug in die Glut und zurück, wie bei der Glutwelt
+      const u = trip.phase === "in" ? trip.t / dIn() : 1 - trip.t / dOut();
+      render(now / 1000); zoomFrame(clamp(u, 0, 1), u * u * .8, clamp(trip.phase === "in" ? (u - .8) / .2 : (u - .7) / .3, 0, 1));
+    } else render(now / 1000);
     safe = { bx, ashStart };
   } catch (e) {
     ctx = mainCtx;               // falls der Fehler beim Verbiegen auf der Zwischenebene passierte
