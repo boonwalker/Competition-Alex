@@ -1642,11 +1642,11 @@ function diveUpdate(dt) {
 // ---------- Ausflüge aus der Glut: Videos bei bestimmten Zügen (ohne gedrückt gehaltenen Bildschirm) ----------
 // Jeder neu begonnene Zug zählt (Mikro oder Finger), egal wie viel er abbrennt.
 //  4. Zug: Strand-Video des Spielers, quer und bildfüllend, mit wolkigen Traumrändern, höchstens 3 s
-//  8. Zug: Animations-Video, quer (auf dem Hochkant-Bildschirm gedreht), läuft ganz durch
+//  7. Zug: Animations-Video, quer (auf dem Hochkant-Bildschirm gedreht), läuft ganz durch
 const TRIPS = [
   { at: 4, audio: "strand.mp3", orient: "landscape", maxMs: 3000, gain: .55, dream: true },
   // läuft immer ganz durch (Antippen, Bewegung usw. beenden es nicht), nur mit eigenem Ton – ohne Hintergrundmusik
-  { at: 8, audio: "trip2.mp3", orient: "landscape", maxMs: 16000, gain: .7, locked: true, noMusic: true },
+  { at: 7, audio: "trip2.mp3", orient: "landscape", maxMs: 16000, gain: .7, locked: true, noMusic: true },
 ];
 const trip = { phase: "none", t: 0, on: false, clip: null, src: null, gain: null, run: 0, timer: 0, still: false };
 let drawCount = 0, fingerCounted = false;
