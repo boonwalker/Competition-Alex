@@ -244,7 +244,7 @@ function buildFrame() {
   const thBase = th;
   if (stubPose && (state === "stub" || state === "out") && stubPose.k > 0) {
     // Boden = Linie quer zur gemessenen Schwerkraft, nahe dem in Fallrichtung tiefsten Bildschirmrand ("hält die Waage")
-    const [gx, gy] = gravScreen(), D = Math.max(0, W * gx, H * gy, W * gx + H * gy) - stubPose.floor;
+    const [gx, gy] = stubGrav(), D = Math.max(0, W * gx, H * gy, W * gx + H * gy) - stubPose.floor;
     const dTip = tiltK * (bx + L / 2 + radius(bx) * .15), c = clamp((D - (ax * gx + ay * gy)) / dTip, -.985, .985);
     const phi = Math.atan2(gy, gx), a = Math.acos(c), wrap = d => Math.atan2(Math.sin(d), Math.cos(d));
     // die Spitze muss im Bild bleiben: sonst nur so weit Richtung Boden drehen, wie sie noch zu sehen ist
@@ -270,6 +270,8 @@ function gravScreen() {
   if (gScreen && Math.hypot(gScreen[0], gScreen[1]) > 3) { const l = Math.hypot(gScreen[0], gScreen[1]); return [gScreen[0] / l, gScreen[1] / l]; }
   return [orient ? 1 : -1, 0];
 }
+// beim Ausdrücken: nach dem letzten Stoß wird die Lage festgehalten – Stummel und Asche bleiben dann liegen, egal wie das Handy gedreht wird
+const stubGrav = () => (stubPose && stubPose.gLock) || gravScreen();
 // dieselbe Richtung im Koordinatensystem des Joints (für fallende Asche, Funken, Aschenbecherboden)
 function updateG() {
   if (!frameInv) return;
@@ -1466,7 +1468,10 @@ function update(dt, t) {
   }
   if (state === "stub") {
     stubT += dt;
-    if (stubPose) { stubPose.k = easeIO(clamp(stubT / STUB_LOWER, 0, 1)); buildFrame(); }   // folgt dabei der gemessenen Lage
+    if (stubPose) {   // folgt bis zum Ende des letzten Stoßes der gemessenen Lage, danach bleibt alles liegen
+      if (!stubPose.gLock && stubT > pushT[pushT.length - 1] + PUSH_DUR + .15) stubPose.gLock = gravScreen();
+      stubPose.k = easeIO(clamp(stubT / STUB_LOWER, 0, 1)); buildFrame();
+    }
     const R = radius(bx);
     for (let j = 0; j < pushT.length; j++) if (!pushFired[j] && stubT >= pushT[j]) { pushFired[j] = true; pushFx(j); }
     stubC = stubCompress(stubT);
@@ -1751,7 +1756,12 @@ function drawSmears() {
 }
 // Koordinaten des Aschenbecherbodens an der Spitze: x entlang des Bodens, y nach unten (Schwerkraft), 0 = Spitze
 function floorXf() {
-  const gl = Math.hypot(GX, GY) || 1, gx = GX / gl, gy = GY / gl;
+  let gX = GX, gY = GY;
+  if (stubPose && frameInv) {   // Boden in derselben (ggf. festgehaltenen) Lage wie der Stummel
+    const [sx, sy] = stubGrav(), a = frameInv.transformPoint(new DOMPoint(W / 2, H / 2)), b = frameInv.transformPoint(new DOMPoint(W / 2 + sx, H / 2 + sy));
+    gX = b.x - a.x; gY = b.y - a.y;
+  }
+  const gl = Math.hypot(gX, gY) || 1, gx = gX / gl, gy = gY / gl;
   ctx.transform(-gy, gx, gx, gy, bx + radius(bx) * .12, bendY(bx));
 }
 function drawCrumple(t) {
