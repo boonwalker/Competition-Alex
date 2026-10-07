@@ -816,13 +816,14 @@ function playSnippet(when, allowResume) {
   src.onended = () => { if (cSrc === src && mGate) playSnippet(ac.currentTime); };   // länger gezogen: nächster zufälliger Schnipsel
   cSrc = src; cPlay = { t0: when, off, end };
 }
+let stopFade = .09;
 function customStop() {
   if (!cGain) return;
   const now = ac.currentTime, g = cGain, s0 = cSrc;
-  g.gain.cancelScheduledValues(now); g.gain.setValueAtTime(g.gain.value, now); g.gain.linearRampToValueAtTime(0, now + .09);   // zügig, aber weich ausblenden
+  g.gain.cancelScheduledValues(now); g.gain.setValueAtTime(g.gain.value, now); g.gain.linearRampToValueAtTime(0, now + stopFade);   // zügig, aber weich ausblenden
   cSrc = null; cGain = null;
   if (s0 && cPlay) cResume = { pos: cPlay.off + Math.max(0, now - cPlay.t0), end: cPlay.end, at: performance.now() };
-  if (s0) { s0.onended = null; try { s0.stop(now + .12); } catch (e) {} }
+  if (s0) { s0.onended = null; try { s0.stop(now + stopFade + .03); } catch (e) {} }
 }
 
 function showMusic() { const b = document.getElementById("music"); b.textContent = musicOn ? "♫ Musik: an" : "♫ Musik: aus"; b.setAttribute("aria-pressed", musicOn); }
@@ -1243,11 +1244,13 @@ function update(dt, t) {
   diveUpdate(dt);
   if (state === "lit") {
     // während ein Video läuft (und beim Rückflug), hört das Mikro Video und Musik: Ziehen ruht so lange
-    const tripHold = trip.on && trip.phase !== "in";
+    const tripHold = (trip.on && trip.phase !== "in") || afterglow() > .4;   // auch im ersten Teil des Nachglühens (Musik läuft noch)
     if (tripHold) { if (breathState !== "idle" || drawing) { drawing = false; breathState = "idle"; micLastOn = 0; } musicOffAt = performance.now(); }
     else if (mode === "breath") breathStep(dt);
     const fb = fingerBurning(), dr = drawing || fb;
-    const hTarget = dive.session && !dr ? .85 : fb ? 1.1 : !drawing ? 0 : mode === "breath" ? .6 + micInt * .5 : .75;
+    const ag = afterglow();
+    const back = trip.on && trip.phase === "out";   // Rückflug aus dem Video: Glut glüht kräftig, als würde noch gezogen
+    const hTarget = (dive.session || back) && !dr ? .85 : fb ? 1.1 : !drawing ? .8 * ag : mode === "breath" ? .6 + micInt * .5 : .75;
     heat += (hTarget - heat) * dt * (dr ? 3 : 1.3);
     const span = burnStart - burnEnd, bxPrev = bx;
     bx -= span * dt * 0.0018;                       // glimmt von selbst ganz langsam
@@ -1256,6 +1259,7 @@ function update(dt, t) {
       bx += (fingerX - bx) * Math.min(1, dt * 7);
     }
     if (drawing && mode === "breath") bx -= span * dt * .035 * micInt;                          // brennt, solange Luft gezogen wird
+    else if (ag > 0 && !dr) bx -= span * dt * .012 * ag;                                          // Nachglühen nach einem Video
     if (dr) { drawTime += dt; haze = Math.min(1.2, haze + dt * .035); }
     // beim Ziehen sackt die Asche etwas zusammen: der Aschekegel wächst langsamer, als der Joint abbrennt
     if (dr && bxPrev > bx) ashStart = Math.max(bx, ashStart - (bxPrev - bx) * .4);
@@ -1286,8 +1290,11 @@ function update(dt, t) {
   if (state === "lit") { diveCheck(); autoPuff(); updateTilt(dt); }
   // Stop-and-go: Musik nur, solange wirklich gezogen wird (Finger in Bewegung bzw. Ziehgeräusch)
   tripCheck(dt);
-  const tripMute = trip.on && trip.clip && trip.clip.noMusic && trip.phase !== "in";   // beim zweiten Video nur dessen Ton
-  musicGate(musicOn && !tripMute && (state === "dive" || (state === "lit" && (dive.session || trip.on || drawingNow()))));
+  const tripMute = trip.on && trip.clip && trip.clip.noMusic && trip.phase === "video";   // beim zweiten Video nur dessen Ton; beim Rückflug setzt die Musik wieder ein
+  const ag2 = state === "lit" ? afterglow() : 0;
+  if (mGate && ag2 > 0 && ag2 < .3 && !drawingNow() && !trip.on) stopFade = .7;   // Musik am Ende des Nachglühens sanft ausblenden
+  musicGate(musicOn && !tripMute && (state === "dive" || (state === "lit" && (dive.session || trip.on || ag2 > .3 || drawingNow()))));
+  stopFade = .09;
   musicTone();
 
   // Ausatmen
@@ -1643,6 +1650,9 @@ function diveUpdate(dt) {
 // Jeder neu begonnene Zug zählt (Mikro oder Finger), egal wie viel er abbrennt.
 //  4. Zug: Strand-Video des Spielers, quer und bildfüllend, mit wolkigen Traumrändern, höchstens 3 s
 //  7. Zug: Animations-Video, quer (auf dem Hochkant-Bildschirm gedreht), läuft ganz durch
+// Nach der Rückkehr glimmt der Joint noch kurz kräftig weiter und die Musik läuft aus – kein harter Schnitt
+const AFTER_MS = 2400;
+const afterglow = () => clamp(((trip.afterUntil || 0) - performance.now()) / AFTER_MS, 0, 1);
 const TRIPS = [
   { at: 4, audio: "strand.mp3", orient: "landscape", maxMs: 3000, gain: .55, dream: true },
   // läuft immer ganz durch (Antippen, Bewegung usw. beenden es nicht), nur mit eigenem Ton – ohne Hintergrundmusik
@@ -1685,7 +1695,7 @@ function startTrip(c) {
 }
 function tripUpdate(dt) {
   if (trip.phase === "in") { trip.t += dt; if (trip.t >= dIn()) showTrip(); }
-  else if (trip.phase === "out") { trip.t += dt; if (trip.t >= dOut()) { trip.phase = "none"; trip.on = false; trip.clip = null; } }
+  else if (trip.phase === "out") { trip.t += dt; if (trip.t >= dOut()) { trip.phase = "none"; trip.on = false; trip.clip = null; trip.afterUntil = performance.now() + AFTER_MS; } }
 }
 // Wolkige Traumränder einmal pro Bildschirmgröße zeichnen
 let dreamKey = "";
@@ -1760,6 +1770,7 @@ function stopTrip(abort) {
   trip.src = null;
   if (abort === true || trip.phase === "in") { trip.phase = "none"; trip.on = false; trip.clip = null; return; }
   trip.phase = "out"; trip.t = 0; whoosh(false);
+  heat = Math.max(heat, .85);
 }
 // Antippen: hängt das Video, startet es (Antippen erlaubt das immer); läuft es schon, ist der Ausflug vorbei
 tripEl.addEventListener("pointerdown", e => {
