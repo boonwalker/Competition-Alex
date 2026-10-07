@@ -797,7 +797,7 @@ document.getElementById("music").onclick = () => {
 // Aufnahme des Spielers: Deckel auf, 1,5 s später Reibrad mit direkt folgender Flamme – erst dann entflammt der Joint
 const Z = { open: .25, strike: 1.79, ign: 2.15, catchT: 2.2, off: 3.6, lit: 3.9 };
 const zUp = () => { const n = Math.hypot(GX, GY) || 1; return [-GX / n, -GY / n]; };   // Flamme steigt im Lot: weg vom Boden, zum rechten Rand
-const zTip = () => [burnStart + r1 * .35, 0];
+const zTip = () => [burnStart + r1 * .08, 0];
 function zippoBase(h) { const [ux, uy] = zUp(), [tx, ty] = zTip(); return [tx - ux * h * .06, ty - uy * h * .06]; }   // Flamme sitzt auf der gedrehten Spitze
 // Detailreiche Flamme: blauer Fuß, heller Kern, gelber Leuchtkörper, flackernde Spitze, abreißende Zungen
 function drawFlame(t, a) {
@@ -871,18 +871,27 @@ function drawJointPart(t, R, lit) {
   }
   ctx.restore();
 
-  // Gedrehtes Ende (unangezündet / beim Anzünden)
-  if (state === "unlit" || (state === "lighting" && lightT < Z.ign + .8)) {
-    const k = state === "unlit" ? 1 : 1 - clamp((lightT - Z.ign) / .8, 0, 1);   // das gedrehte Ende verbrennt in der eigenen Flamme
+  // Offenes Ende (unangezündet / beim Anzünden): keine gedrehte Spitze, man sieht nur leicht schräg auf den Tabak
+  if (state === "unlit" || (state === "lighting" && lightT < Z.ign + .6)) {
+    const k = state === "unlit" ? 0 : clamp((lightT - Z.ign) / .6, 0, 1);   // verkohlt in der Flamme
+    const R = radius(burnStart), ex = burnStart - 1, rx = R * .2;
     ctx.save();
-    ctx.beginPath(); ctx.moveTo(burnStart - 1, -r1); ctx.quadraticCurveTo(burnStart + r1 * .6 * k, -r1 * .3, burnStart + r1 * 1.3 * k, -r1 * .05);
-    ctx.lineTo(burnStart + r1 * 1.3 * k, r1 * .1); ctx.quadraticCurveTo(burnStart + r1 * .5 * k, r1 * .5, burnStart - 1, r1); ctx.closePath();
-    const tg = ctx.createLinearGradient(0, -r1, 0, r1);
-    tg.addColorStop(0, "#6f6656"); tg.addColorStop(.3, "#d9cfb9"); tg.addColorStop(1, "#3a3328");
-    ctx.fillStyle = state === "lighting" && lightT > Z.ign ? `rgba(60,35,20,${1 - k * .4})` : tg; ctx.fill();
-    ctx.strokeStyle = "rgba(80,60,40,.35)"; ctx.lineWidth = 1;
-    for (let i = 1; i < 4; i++) { ctx.beginPath(); ctx.moveTo(burnStart, -r1 + i * r1 * .5); ctx.quadraticCurveTo(burnStart + r1 * .5 * k, -r1 * .2 + i * .1 * r1, burnStart + r1 * 1.2 * k, 0); ctx.stroke(); }
+    ctx.beginPath(); ctx.ellipse(ex, (topY(ex) + botY(ex)) / 2, rx, (botY(ex) - topY(ex)) / 2 * .97, 0, 0, 7);
+    const eg = ctx.createRadialGradient(ex - rx * .3, -R * .2, 0, ex, 0, R);
+    eg.addColorStop(0, "#5e4c2e"); eg.addColorStop(.6, "#43361f"); eg.addColorStop(1, "#1f180d");
+    ctx.fillStyle = eg; ctx.fill();
+    ctx.clip();
+    for (let i = 0; i < 70; i++) {   // Krümel und Fasern in der Öffnung
+      ctx.fillStyle = ["#1e170b", "#7a6640", "#3e4420", "#9a8452", "#5a4a28"][i % 5];
+      ctx.globalAlpha = .55 + hsh(i + 1) * .45;
+      ctx.fillRect(ex + (hsh(i) - .5) * rx * 1.7, (hsh(i + 9) - .5) * R * 1.9, .8 + hsh(i + 3) * 1.4, .7 + hsh(i + 5) * 1.1);
+    }
+    ctx.globalAlpha = 1;
+    if (k > 0) { ctx.fillStyle = `rgba(25,12,6,${k})`; ctx.fillRect(ex - rx, -R, rx * 2, R * 2); }
     ctx.restore();
+    // Papierkante
+    ctx.strokeStyle = "rgba(235,226,205,.35)"; ctx.lineWidth = .8;
+    ctx.beginPath(); ctx.ellipse(ex, (topY(ex) + botY(ex)) / 2, rx, (botY(ex) - topY(ex)) / 2 * .97, 0, -Math.PI / 2, Math.PI / 2); ctx.stroke();
   }
 
   // Asche
