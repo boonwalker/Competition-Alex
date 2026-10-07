@@ -1195,12 +1195,20 @@ let stubWr = [], stubTear = null;
 function makeKinks() {
   const xs = x0 + filterLen, ratio = clamp((bx - xs) / (fullLen - filterLen), 0, 1);
   // Biegungen häufen sich zur gedrückten Spitze hin und werden dort stärker; Richtung Filter nur noch sanft
-  const nK = 2 + Math.round(ratio * 3 + Math.random());
+  // Langer Rest: deutlich mehr Biegungen, auch weiter hinten; das vordere Ende (Aschekontaktfläche) bleibt dabei gerade
+  const long = clamp((ratio - .4) / .4, 0, 1);
+  const nK = 2 + Math.round(ratio * 3 + Math.random() + long * 3.5), pMax = .96 - long * .1;
   const pos = [];
-  for (let tries = 0; pos.length < nK && tries < 80; tries++) { const p = 1 - Math.pow(Math.random(), 1.7) * .85; if (p < .96 && pos.every(q => Math.abs(q - p) > .07)) pos.push(p); }
+  for (let tries = 0; pos.length < nK && tries < 120; tries++) {
+    const p = Math.random() < long * .55 ? rand(.14, .8) : 1 - Math.pow(Math.random(), 1.7) * .85;
+    if (p < pMax && pos.every(q => Math.abs(q - p) > .07 - long * .015)) pos.push(p);
+  }
   pos.sort((a, b) => b - a);   // von der Spitze her knickt es zuerst
   let side = Math.random() < .5 ? -1 : 1;
-  stubKinks = pos.map((p, i) => { const k = { p, a: rand(.2, .5) * (.2 + .8 * p * p) * side, w: rand(.022, .045), order: i }; side = Math.random() < .7 ? -side : side; return k; });
+  stubKinks = pos.map((p, i) => {
+    const w = rand(.022, .045) * (1 - long * .2), k = { p: Math.min(p, pMax - w * 2.5 * long), a: rand(.2, .5) * (.2 + .8 * p * p + long * .45 * (1 - p)) * side, w, order: i };
+    side = Math.random() < .7 ? -side : side; return k;
+  });
   // feine Knitterfalten: viele kurze, leicht gebogene Falten, dicht an der Spitze, zum Filter hin immer seltener
   stubWr = [];
   for (let i = 0; i < 70 + ratio * 70; i++) stubWr.push({ s: 1 - Math.pow(Math.random(), 2.3) * .97, y: rand(-.9, .9), span: rand(.08, .4), slant: rand(-.9, .9), bow: rand(-.35, .35), dark: Math.random() < .62, w: rand(.35, .9), a: rand(.35, 1) });
