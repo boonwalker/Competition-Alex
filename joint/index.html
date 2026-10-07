@@ -38,6 +38,9 @@ html, body { margin: 0; }
 /* Strand-Video beim dritten Zug: bildschirmfüllend, so gedreht, dass oben = oben beim Halten */
 .trip { position: fixed; inset: 0; z-index: 3; background: #000; overflow: hidden; opacity: 0; transition: opacity .7s ease; }
 .trip.on { opacity: 1; }
+.trip.still video { animation: kenburns 9s ease-out forwards; }
+@keyframes kenburns { to { transform: translate(-50%, -50%) rotate(var(--rot, 0deg)) scale(1.12); } }
+@media (prefers-reduced-motion: reduce) { .trip.still video { animation: none; } }
 .trip video { position: absolute; left: 50%; top: 50%; object-fit: cover; transform: translate(-50%, -50%) rotate(var(--rot, 0deg)); }
 .trip::after { content: ""; position: absolute; inset: 0; pointer-events: none; box-shadow: inset 0 0 90px 30px rgba(20,8,0,.55); }
 .cue { position: fixed; left: 50%; bottom: calc(env(safe-area-inset-bottom, 0px) + 18px); transform: translateX(-50%); z-index: 2; font: 600 15px var(--body); color: var(--ink); background: rgba(20,18,16,.75); border: 1px solid rgba(255,255,255,.12); border-radius: 999px; padding: 8px 16px; white-space: nowrap; pointer-events: none; }
@@ -71,7 +74,7 @@ button:focus-visible { outline: 2px solid var(--ember); outline-offset: 3px; }
 <canvas id="c"></canvas>
 
 <div class="cue" id="cue" hidden></div>
-<div class="trip" id="trip" hidden><video id="tripVid" src="strand.mp4" muted playsinline preload="auto" disablepictureinpicture></video></div>
+<div class="trip" id="trip" hidden><video id="tripVid" src="strand.mp4" poster="strand.jpg" muted playsinline webkit-playsinline preload="auto" disablepictureinpicture></video></div>
 <div class="hud" id="micHud" hidden></div>
 
 <div class="overlay" id="start">
@@ -1156,7 +1159,7 @@ function update(dt, t) {
     const span = burnStart - burnEnd;
     bx -= span * dt * 0.0018;                       // glimmt von selbst ganz langsam
     if (pid !== null && fingerX < bx) {                                                        // brennt bis zum Finger (geht immer, auch im Atem-Modus)
-      if (bx - fingerX > .5) lastBurnT = performance.now();
+      if (bx - fingerX > .5) { lastBurnT = performance.now(); if (!fingerCounted) { fingerCounted = true; drawCount++; } }
       bx += (fingerX - bx) * Math.min(1, dt * 7);
     }
     if (drawing && mode === "breath") bx -= span * dt * .035 * micInt;                          // brennt, solange Luft gezogen wird
@@ -1480,7 +1483,9 @@ function diveUpdate(dt) {
 }
 
 // ---------- Beim dritten Zug: kurz an den Strand (Video vom Spieler) ----------
-const trip = { played: false, on: false, buf: null, raw: null, src: null, gain: null, run: 0, timer: 0 };
+// Jeder neu begonnene Zug zählt (Mikro oder Finger), egal wie viel er abbrennt.
+const trip = { played: false, on: false, buf: null, raw: null, src: null, gain: null, run: 0, timer: 0, unlocked: false, still: false };
+let drawCount = 0, fingerCounted = false;
 const tripEl = document.getElementById("trip"), tripVid = document.getElementById("tripVid");
 fetch("strand.mp3").then(r => r.ok ? r.arrayBuffer() : null).then(b => { trip.raw = b; decodeTrip(); }).catch(() => {});
 function decodeTrip() {
@@ -1488,33 +1493,46 @@ function decodeTrip() {
   const raw = trip.raw; trip.raw = null;
   ac.decodeAudioData(raw, b => trip.buf = b, () => {});
 }
+// Muss direkt im Antippen von "Anzünden" passieren: iOS (vor allem im Stromsparmodus) startet Videos sonst nicht von selbst.
+function unlockTripVideo() {
+  try {
+    tripVid.muted = true; tripVid.playsInline = true;
+    const pr = tripVid.play();
+    if (pr && pr.then) pr.then(() => { trip.unlocked = true; if (!trip.on) { tripVid.pause(); try { tripVid.currentTime = 0; } catch (e) {} } }).catch(() => {});
+  } catch (e) {}
+}
 function tripCheck(dt) {
   if (trip.on && state !== "lit") { stopTrip(); return; }
   if (trip.played || state !== "lit" || dive.phase !== "none" || dive.session) return;
   trip.run = drawingNow() ? trip.run + dt : 0;
-  if (totalDrags >= 2 && trip.run > .35) startTrip();   // die ersten zwei Züge sind durch, der dritte läuft
+  if (drawCount >= 3 && trip.run > .3) startTrip();   // der dritte Zug läuft
 }
 function startTrip() {
-  trip.played = true; trip.on = true;
+  trip.played = true; trip.on = true; trip.still = false;
   // Ausrichtung: Oberkante des Videos zeigt nach oben (Bewegungssensor), sonst wie beim Halten angenommen
   let rot = H > W ? (orient ? -90 : 90) : 0;
   if (gScreen && Math.hypot(gScreen[0], gScreen[1]) > 3) rot = Math.round(Math.atan2(-gScreen[0], gScreen[1]) * 180 / Math.PI / 90) * 90;
   const side = Math.abs(rot) % 180 === 90;
   tripVid.style.width = (side ? H : W) + "px"; tripVid.style.height = (side ? W : H) + "px";
   tripVid.style.setProperty("--rot", rot + "deg");
+  tripEl.classList.remove("still");
   tripEl.hidden = false; void tripEl.offsetWidth; tripEl.classList.add("on");
   try { tripVid.currentTime = 0; } catch (e) {}
-  let started = false;
-  const go = () => { if (started || !trip.on) return; started = true; tripSound(); };
-  tripVid.onplaying = go;
+  tripVid.onplaying = () => { if (trip.on) { tripEl.classList.remove("still"); tripSound(); } };
   tripVid.onended = () => stopTrip();
   tripVid.play().catch(() => {});
-  setTimeout(go, 600);                                   // Ton auch, falls das Video noch lädt
-  clearTimeout(trip.timer); trip.timer = setTimeout(stopTrip, 11000);
+  // Startet das Video nicht (gesperrt oder lädt zu lange): Standbild mit sanftem Zoom und trotzdem Ton
+  setTimeout(() => {
+    if (!trip.on || (!tripVid.paused && tripVid.currentTime > 0)) return;
+    trip.still = true; tripEl.classList.add("still"); tripSound();
+    clearTimeout(trip.timer); trip.timer = setTimeout(stopTrip, 9500);
+  }, 1500);
+  clearTimeout(trip.timer); trip.timer = setTimeout(stopTrip, 11500);
 }
 function tripSound() {
   decodeTrip();
   if (!ac || !trip.buf) return;
+  if (trip.src) { try { trip.src.stop(); } catch (e) {} }
   const src = ac.createBufferSource(), g = ac.createGain();
   src.buffer = trip.buf; g.gain.value = .55;            // etwas leiser als das Original
   src.connect(g).connect(master); src.start(ac.currentTime, clamp(tripVid.currentTime || 0, 0, trip.buf.duration - .1));
@@ -1528,7 +1546,12 @@ function stopTrip() {
   if (trip.src && ac) { const t = ac.currentTime; trip.gain.gain.setTargetAtTime(0, t, .2); try { trip.src.stop(t + .9); } catch (e) {} }
   trip.src = null;
 }
-tripEl.addEventListener("pointerdown", e => { e.stopPropagation(); stopTrip(); });   // Antippen beendet den Ausflug
+// Antippen: hängt das Video, startet es (Antippen erlaubt das immer); läuft es schon, ist der Ausflug vorbei
+tripEl.addEventListener("pointerdown", e => {
+  e.stopPropagation();
+  if (trip.on && trip.still) { trip.still = false; clearTimeout(trip.timer); trip.timer = setTimeout(stopTrip, 11000); tripVid.play().catch(() => {}); return; }
+  stopTrip();
+});
 
 // Gerenderte Joint-Szene auf einen Punkt zoomen (Kameraflug)
 // Kameraflug: auf die Glut zoomen, sie dabei zur Bildmitte ziehen und in die Ausrichtung der Stadt hineindrehen
@@ -2126,7 +2149,7 @@ cv.addEventListener("pointerdown", e => {
   if (!nearTip(pt)) return;   // Ziehen (bzw. Abaschen) nur an der Glut
   pid = e.pointerId; downAt = performance.now(); downPt = pt; moved = false;
   try { cv.setPointerCapture(pid); } catch (er) {}
-  fingerX = bx; fingerFrom = bx;
+  fingerX = bx; fingerFrom = bx; fingerCounted = false;
   if (mode === "finger") { drawing = true; drawTime = 0; drawFrom = bx; }
 });
 cv.addEventListener("pointermove", e => {
@@ -2155,7 +2178,7 @@ cv.addEventListener("pointerup", release); cv.addEventListener("pointercancel", 
 cv.addEventListener("contextmenu", e => e.preventDefault());
 
 document.getElementById("light").onclick = async () => {
-  ensureAudio(); decodeCustom();
+  ensureAudio(); decodeCustom(); unlockTripVideo();
   const motionP = requestMotion();   // auch ohne Klopfen: für die Neigung der Glutwelt
   let useMode = prefMode, note = "";
   if (prefMode === "breath") {
@@ -2172,7 +2195,7 @@ document.getElementById("light").onclick = async () => {
   if (note) { setCue(note); setTimeout(() => setCue(""), 5000); }
   document.getElementById("start").classList.add("gone");
   state = "lighting"; lightT = 0; unexhaled = 0; autoPuffAt = 0; trip.played = false; trip.run = 0;
-  decodeTrip(); try { tripVid.load(); } catch (e) {}
+  decodeTrip(); drawCount = 0;
   lighterSound();
   try { navigator.wakeLock && navigator.wakeLock.request("screen").catch(() => {}); } catch (e) {}
 };
@@ -2439,7 +2462,7 @@ function breathStep(dt) {
     if (micOnTime > .12 && state === "lit") {
       // Ziehen ist der Normalfall. Pusten zählt nur, wenn Rauch in der Lunge ist UND der Klang eindeutig nach Pusten klingt.
       breathState = lungs > .05 && blowScore > .7 ? "blow" : "draw";
-      if (breathState === "draw") { drawing = true; drawTime = 0; drawFrom = bx; lastBxBreath = bx; evStart = now; lungsBefore = lungs; autoPuffAt = 0; }
+      if (breathState === "draw") { drawing = true; drawTime = 0; drawFrom = bx; lastBxBreath = bx; evStart = now; lungsBefore = lungs; autoPuffAt = 0; drawCount++; }
     }
   } else if (breathState === "draw") {
     lungs += Math.max(0, lastBxBreath - bx) / (L * .08); lastBxBreath = bx; lungsAt = now;
@@ -2456,14 +2479,14 @@ function breathStep(dt) {
     if (lungs > 0) { exhaleStrength = clamp(.55 + lungs * .5, .55, 1.6); lungs = Math.max(0, lungs - dt * micBlow * .3); }
     else if (exhaleSrc === "mic") exhaleT = -1;
     if (silentFor > 350) { breathState = "idle"; if (exhaleSrc === "mic") exhaleT = -1; }
-    else if (blowScore < .45 && state === "lit") { breathState = "draw"; drawing = true; drawTime = 0; drawFrom = bx; lastBxBreath = bx; evStart = now; lungsBefore = lungs; if (exhaleSrc === "mic") exhaleT = -1; }
+    else if (blowScore < .45 && state === "lit") { breathState = "draw"; drawing = true; drawCount++; drawTime = 0; drawFrom = bx; lastBxBreath = bx; evStart = now; lungsBefore = lungs; if (exhaleSrc === "mic") exhaleT = -1; }
   }
   micInt += ((breathState === "draw" ? drawRaw : 0) - micInt) * Math.min(1, dt * 10);
   micBlow += ((breathState === "blow" && lungs > 0 ? blowRaw : 0) - micBlow) * Math.min(1, dt * 10);
   if (lungs > 0 && now - lungsAt > 25000) lungs = 0;   // zu lange angehalten: Rauch ist weg
   setCue(micNeedTap ? "Einmal kurz auf den Bildschirm tippen – dann hört das Mikro zu" : lungs > .05 && breathState !== "blow" && breathState !== "draw" ? "Reinpusten zum Ausatmen" : "");
   if (micHud) $("micHud").textContent =
-    `${{ idle: "Ruhe", draw: "Ziehen", blow: "Pusten" }[breathState]} · Schwerpunkt ${(centroid / 1000).toFixed(1)} kHz · tief ${micLo | 0} dB / hoch ${micHi | 0} dB · Puste-Wert ${blowScore.toFixed(2)} · Lunge ${lungs.toFixed(1)} · Audio ${ac.state} ${ac.sampleRate} · Spitze ${micPeak | 0} dB · Zippo-Test ${micTest ? (micTest.t0 ? "läuft" : micTest.ok ? "gehört" : "nichts gehört") : "–"} · Kopplung ${cplDb ? Array.from(cplDb, v => v | 0).join("/") : "–"}`;
+    `${{ idle: "Ruhe", draw: "Ziehen", blow: "Pusten" }[breathState]} · Schwerpunkt ${(centroid / 1000).toFixed(1)} kHz · tief ${micLo | 0} dB / hoch ${micHi | 0} dB · Puste-Wert ${blowScore.toFixed(2)} · Lunge ${lungs.toFixed(1)} · Audio ${ac.state} ${ac.sampleRate} · Spitze ${micPeak | 0} dB · Züge ${drawCount} · Video ${trip.on ? (trip.still ? "Standbild" : "läuft") : trip.played ? "war dran" : "wartet"} · Zippo-Test ${micTest ? (micTest.t0 ? "läuft" : micTest.ok ? "gehört" : "nichts gehört") : "–"} · Kopplung ${cplDb ? Array.from(cplDb, v => v | 0).join("/") : "–"}`;
 }
 
 // Klopfen auf den Rahmen = Ruck im Beschleunigungssensor; Empfindlichkeit wird beim Anzünden festgelegt
