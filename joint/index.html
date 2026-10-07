@@ -838,7 +838,7 @@ document.getElementById("music").onclick = () => {
 // Aufnahme des Spielers: Deckel auf, 1,5 s später Reibrad mit direkt folgender Flamme – erst dann entflammt der Joint
 const Z = { open: .25, strike: 1.79, ign: 2.15, catchT: 2.2, off: 3.6, lit: 3.9 };
 const zUp = () => { const n = Math.hypot(GX, GY) || 1; return [-GX / n, -GY / n]; };   // Flamme steigt im Lot: weg vom Boden, zum rechten Rand
-const zTip = () => [burnStart + radius(burnStart) * .18, 0];   // vorn auf der Schnittfläche
+const zTip = () => [burnStart + radius(burnStart) * .42, 0];   // vorn am obersten Ende des Joints
 // Flamme hüllt die ganze Schnittfläche ein; ihr bauchigster Teil sitzt an der gegenüberliegenden Kante der Öffnung
 function zippoBase(h) { const [ux, uy] = zUp(), [tx, ty] = zTip(), R = radius(burnStart) * .1; return [tx - ux * R, ty - uy * R]; }
 // Detailreiche Flamme: blauer Fuß, heller Kern, gelber Leuchtkörper, flackernde Spitze, abreißende Zungen
